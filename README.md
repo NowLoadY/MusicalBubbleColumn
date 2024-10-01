@@ -25,7 +25,7 @@ MusicalWaterfall是一个基于Python的3D音乐可视化项目，旨在通过�
 
 运行主程序以开始可视化：
 ```bash
-python pattern_show_test_3d.py
+python musicalwaterfall.py
 ```
 
 根据提示选择是否可视化虚拟钢琴，并输入MIDI文件路径。
