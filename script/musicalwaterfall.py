@@ -1,3 +1,6 @@
+"""
+musical waterfall!
+"""
 import matplotlib
 matplotlib.use('Qt5Agg')  # 使用 Qt5 后端
 import matplotlib.pyplot as plt
@@ -7,10 +10,15 @@ import pygame
 import threading
 from collections import deque
 from matplotlib.gridspec import GridSpec
+from PyQt5 import QtGui
 
 class PatternVisualizer3D:
-    def __init__(self, visualize_piano=True, pos_type="Fibonacci"):
+    def __init__(self, visualize_piano=True, pos_type="Fibonacci", draw_index=False, orientation="up", terminal_show=True, draw_lines=True):
+        self.orientation=orientation
+        self.terminal_show=terminal_show
+        self.draw_lines=draw_lines
         self.elev = 30
+        self.draw_index = draw_index
         self.pos_type = pos_type
         self.total_center = (30, 30, 15)
         self.visualize_piano = visualize_piano
@@ -28,12 +36,21 @@ class PatternVisualizer3D:
         self.elev = val
 
     def _initialize_plot(self):
-        #self.fig = plt.figure(facecolor='#FFFAF0', figsize=(12, 8))
         self.fig = plt.figure(facecolor='black', figsize=(12, 8))
+        self.fig.canvas.manager.window.setWindowTitle("musical waterfall")
+        PATH_TO_ICON = "icon.png"
+        new_icon = QtGui.QIcon(PATH_TO_ICON)
+        fig =plt.gcf()
+        fig.canvas.manager.window.setWindowIcon(QtGui.QIcon(new_icon))
         if self.visualize_piano:
-            gs = GridSpec(2, 1, height_ratios=[1, 4])
-            self.piano_ax = self.fig.add_subplot(gs[0])
-            self.ax = self.fig.add_subplot(gs[1], projection='3d')
+            if self.orientation == "down":
+                gs = GridSpec(2, 1, height_ratios=[1, 20])
+                self.piano_ax = self.fig.add_subplot(gs[0])
+                self.ax = self.fig.add_subplot(gs[1], projection='3d')
+            else:
+                gs = GridSpec(2, 1, height_ratios=[20, 1])
+                self.ax = self.fig.add_subplot(gs[0], projection='3d')
+                self.piano_ax = self.fig.add_subplot(gs[1])
         else:
             gs = GridSpec(1, 1)
             self.ax = self.fig.add_subplot(gs[0], projection='3d')
@@ -44,15 +61,15 @@ class PatternVisualizer3D:
         self.ax.set_facecolor((0, 0, 0, 0))
         self.ax.set_zlim(0, 30)
         self.ax.set_box_aspect([1, 1, 4])
-        self._create_base_3d_lines(5)
-        self.elev_slider = plt.axes([0.1, 0.01, 0.8, 0.03], facecolor='gray')  # 创建滑条位置并设置颜色
-        self.elev_slider = plt.Slider(self.elev_slider, 'Elev', -90, 90, valinit=self.elev, color='white')  # 初始化滑条并设置颜色
+        self._create_base_3d_lines(2)
+        self.elev_slider = plt.axes([0.1, 0.01 if self.orientation=="down" else 0.1, 0.8, 0.03], facecolor='none')  # 创建滑条位置并设置颜色
+        self.elev_slider = plt.Slider(self.elev_slider, 'Elev', -90, 90, valinit=self.elev, color=(1,1,1,0.1), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'black', 'edgecolor': '1', 'size': 20})  # 初始化滑条并设置颜色
         self.elev_slider.on_changed(self.update_elev)  # 绑定滑条变化事件
         if self.visualize_piano:
             self.piano_ax.set_xlim(0, 120)
             self.piano_ax.set_ylim(0, 1)
             self.piano_ax.axis('off')
-            self.piano_keys = self.piano_ax.bar(range(120), [1]*120, color='gray', edgecolor='black')
+            self.piano_keys = self.piano_ax.bar(range(120), [1]*120, color='gray', edgecolor='black', width=0.5)
 
     def _initialize_data(self):
         if self.pos_type!= "line":
@@ -126,10 +143,10 @@ class PatternVisualizer3D:
         if self.visualize_piano:
             for i, key in enumerate(self.piano_keys):
                 if bit_array[i]:
-                    alpha = min((volumes[i]/0.75+0.25*127) / 127, 1)  # 假设 velocity 的最大值为 127
-                    new_color = (0, 0, 0, alpha)
+                    alpha = min((volumes[i]*0.2+0.8*127) / 127, 1)  # velocity 的最大值为 127
+                    new_color = (1, 1, 1, alpha)
                 else:
-                    new_color = 'white'
+                    new_color = (1, 1, 1, 0.2)
                 if key.get_facecolor() != new_color:
                     key.set_color(new_color)
 
@@ -139,11 +156,11 @@ class PatternVisualizer3D:
         for _ in range(num_lines):
             # 随机生成每条折线的坐标
             cx, cy, cz = self.total_center
-            line = [(cx+np.random.uniform(-100, 100), cy+np.random.uniform(-100, 100), cz+np.random.uniform(-1, 1)) for _ in range(5)]
+            line = [(cx+np.random.uniform(-100, 100), cy+np.random.uniform(-100, 100), cz+np.random.uniform(-1, 1)) for _ in range(10)]
             self.base_3d_lines.append(line)
 
-    def _draw_random_3d_lines(self, change_val=5, x_rand=(-100, 100), y_rand=(-100, 100), z_rand=(-30, 30), max_length=40):
-        # 绘制折线段（白色），每条折线段有num_points_per_line个随机坐标
+    def _draw_random_3d_lines(self, change_val=5, x_rand=(-100, 100), y_rand=(-100, 100), z_rand=(-30, 30), max_length=50):
+        # 绘制折线段（白色）
         if change_val > 1:
             cx, cy, cz = self.total_center
             for i in range(len(self.base_3d_lines)):
@@ -178,24 +195,29 @@ class PatternVisualizer3D:
                 self.base_3d_lines[i] = offset_line
                 # 绘制偏移后的结果
                 xs, ys, zs = zip(*offset_line)
-                self.ax.plot3D(xs, ys, zs, color='white', linewidth=0.1)
+                self.ax.plot3D(xs, ys, zs, color=(1,1,1,0.5), linewidth=0.1)
+                self.ax.scatter(xs, ys, zs, c='white', marker='o', s=1)
         else:
             for line in self.base_3d_lines:
                 xs, ys, zs = zip(*line)
-                self.ax.plot3D(xs, ys, zs, color='white', linewidth=0.1)
+                self.ax.plot3D(xs, ys, zs, color=(1,1,1,0.5), linewidth=0.1)
+                self.ax.scatter(xs, ys, zs, c='white', marker='o', s=1)
 
     def update_pattern(self, new_pattern, volumes, average_volume, now_velocity=1):
         if len(new_pattern) != 15:
             raise ValueError("new_pattern must be exactly 15 bytes long")
         bit_array = np.unpackbits(np.frombuffer(new_pattern, dtype=np.uint8))
-        self.data = np.roll(self.data, shift=-1, axis=0)
-        self.data_no_thick = np.roll(self.data_no_thick, shift=-1, axis=0)  # 滚动更新 data_no_thick
-        self.data[-1, :, :] = 0
-        self.data_no_thick[-1, :, :] = 0  # 重置 data_no_thick 的最后一层
+        self.data = np.roll(self.data, shift=-1 if self.orientation=="down" else 1, axis=0)
+        self.data_no_thick = np.roll(self.data_no_thick, shift=-1 if self.orientation=="down" else 1, axis=0)  # 滚动更新 data_no_thick
+        self.data[-1 if self.orientation=="down" else 0, :, :] = 0
+        self.data_no_thick[-1 if self.orientation=="down" else 0, :, :] = 0  # 重置 data_no_thick 的最后一层
         self.ax.cla()
+        if self.terminal_show:
+            print("".join(str(bit_array).replace("[","").replace("]","").replace("0"," ").replace("1","o").replace("\r","").replace("\n","")))
         self._update_thickness_list(bit_array)
         self._update_data_layer(bit_array, volumes, average_volume)
-        self._draw_random_3d_lines(change_val=5*now_velocity/127)
+        if self.draw_lines:
+            self._draw_random_3d_lines(change_val=5*now_velocity/127)
         self._draw_pattern()
         self._update_piano_keys(bit_array, volumes)  # 更新虚拟钢琴显示
         if not self.pos_type == "line":
@@ -231,18 +253,18 @@ class PatternVisualizer3D:
                 else:
                     self.thickness_list[i] = thickness
                 total_thickness = self.thickness_list[i] + (1 * (119 - i)) // 119
-                self.data_no_thick[-1, x_center, y_center] = 1  # 记录未应用 total_thickness 的点
+                self.data_no_thick[-1 if self.orientation=="down" else 0, x_center, y_center] = 1  # 记录未应用 total_thickness 的点
                 for dx in range(-total_thickness, total_thickness + 1):
                     for dy in range(-total_thickness, total_thickness + 1):
                         if dx**2 + dy**2 <= total_thickness**2:
                             nx, ny = x_center + dx, y_center + dy
                             if (nx, ny) in position_set:
-                                self.data[-1, nx, ny] = 1
+                                self.data[-1 if self.orientation=="down" else 0, nx, ny] = 1
         if variances:  # 检查 variances 是否为空
             if np.mean(variances) < 0.75:  # 平均值阈值，根据需要调整
                 self.scaler += 0.01
             else:
-                self.scaler = max(0, min(self.scaler - 0.01, 2))
+                self.scaler = max(0, min(self.scaler - 0.001, 2))
 
     def _draw_cylinder(self, color='white', alpha=0.05):
         # 计算圆柱面的参数
@@ -273,12 +295,9 @@ class PatternVisualizer3D:
         self.ax.set_box_aspect([1, 1, 4])
         self._hide_axes()
 
-        x, y, z = np.nonzero(np.atleast_3d(self.data_no_thick[-1]))  # 使用 data_no_thick
+        x, y, z = np.nonzero(np.atleast_3d(self.data_no_thick[-1 if self.orientation=="down" else 0]))  # 使用 data_no_thick
         if x.size > 0 and y.size > 0 and z.size > 0:
-            self.ax.scatter(x, y, 30, c='white', marker='o', s=100)
-            
-        # curve_x, curve_y = zip(*self.position_list)
-        # self.ax.plot(curve_x, curve_y, [30] * len(curve_x), color='black', linewidth=0.5)
+            self.ax.scatter(x, y, 30 if self.orientation=="down" else 0, c='white', marker='o', s=100)
         
         # 绘制未激活的灰色点（片段一）
         all_positions = set(self.position_list)
@@ -286,16 +305,17 @@ class PatternVisualizer3D:
         inactive_positions = all_positions - active_positions
         # 绘制未激活的灰色点（片段二）
         opacity_dict = self.opacity_dict
-        if inactive_positions:  # 只在有未激活点时绘制
+        if inactive_positions:
             inactive_with_opacity = [(ix_val, iy_val, opacity_dict[(ix_val, iy_val)]) 
                                       for ix_val, iy_val in inactive_positions if (ix_val, iy_val) in opacity_dict]
-            if inactive_with_opacity:  # 确保有点需要绘制
-                ix_val, iy_val, opacity = zip(*inactive_with_opacity)  # 确保解包三个值
-                self.ax.scatter(ix_val, iy_val, 30, c=[(1, 1, 1, op) for op in opacity], marker='o', s=5)
-                # # 绘制索引号
-                # for (x_val, y_val, _) in inactive_with_opacity:  # 只解包两个值，忽略透明度
-                #     index_position = self.position_list.index((x_val, y_val))  # 获取索引
-                #     self.ax.text(x_val, y_val, 30, str(index_position), color='red', fontsize=8)  # 在点上方绘制索引号
+            if inactive_with_opacity:
+                ix_val, iy_val, opacity = zip(*inactive_with_opacity)
+                self.ax.scatter(ix_val, iy_val, 30 if self.orientation=="down" else 0, c=[(1, 1, 1, op) for op in opacity], marker='o', s=5)
+                if self.draw_index:
+                    # 绘制索引号
+                    for (x_val, y_val, _) in inactive_with_opacity:
+                        index_position = self.position_list.index((x_val, y_val))
+                        self.ax.text(x_val, y_val, 30 if self.orientation=="down" else 0, str(index_position), color='white', fontsize=6)
         # 绘制滚动的层
         all_x, all_y, all_z = [], [], []
         for i in range(1, 30):
@@ -304,14 +324,14 @@ class PatternVisualizer3D:
                 all_x.extend(x)
                 all_y.extend(y)
                 all_z.extend(z + i)  # 将 z 值加上层数
+
         if all_x:  # 如果有点需要绘制
-            #self.ax.scatter(all_x, all_y, all_z, c='#6495ED', marker='o')
             self.ax.scatter(all_x, all_y, all_z, c='#FFFAFA', marker='o')
 
         # 绘制落地的层
-        x, y, z = np.nonzero(np.atleast_3d(self.data[0]))
+        x, y, z = np.nonzero(np.atleast_3d(self.data[0 if self.orientation=="down" else 29]))
         if x.size > 0 and y.size > 0 and z.size > 0:
-            self.ax.scatter(x, y, z, c='white', marker='*', s=200)
+            self.ax.scatter(x, y, z if self.orientation=="down" else 30, c='white', marker='*', s=200)
 
     def _hide_axes(self):
         for axis in [self.ax.xaxis, self.ax.yaxis, self.ax.zaxis]:
@@ -395,6 +415,6 @@ def action_midi_visualization(visualizer, midi_path):
 if __name__ == "__main__":
     pygame.init()
     visualize_piano = input("是否可视化虚拟钢琴？(y/n): ").strip().lower() == 'y'
-    visualizer = PatternVisualizer3D(visualize_piano=visualize_piano)
+    visualizer = PatternVisualizer3D(visualize_piano=visualize_piano, orientation="up", pos_type="Fibonacci", draw_lines=True)#Fibonacci
     action_midi_visualization(visualizer, 'SomethingComforting_for_Piano_Solo.mid')
-    #action_midi_visualization(visualizer, 'The_First_Layer.mid')
+    #action_midi_visualization(visualizer, 'Can_you_hear_the_music.mid')
