@@ -14,7 +14,7 @@ MusicalBubbleColumn是一个基于Python的3D音乐可视化项目，旨在通�
 
 1. 克隆此仓库：
    ```bash
-   git clone https://github.com/yourusername/MusicalBubbleColumn.git
+   git clone https://github.com/NowLoadY/MusicalBubbleColumn.git
    ```
 2. 安装所需的依赖：
    ```bash
