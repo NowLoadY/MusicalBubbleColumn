@@ -1,6 +1,6 @@
 # MusicalWaterfall
 
-MusicalWaterfall是一个基于Python的3D音乐可视化项目，旨在通过动态的3D图形展示MIDI音乐的节奏和音符。该项目结合了Matplotlib和Pygame库，能够实时渲染音乐的视觉效果，提供沉浸式的音乐体验。
+MusicalBubbleColumn是一个基于Python的3D音乐可视化项目，旨在通过动态的3D图形展示MIDI音乐的节奏和音符。该项目结合了Matplotlib和Pygame库，能够实时渲染音乐的视觉效果，提供沉浸式的音乐体验。
 
 ## 特性
 
@@ -14,7 +14,7 @@ MusicalWaterfall是一个基于Python的3D音乐可视化项目，旨在通过�
 
 1. 克隆此仓库：
    ```bash
-   git clone https://github.com/yourusername/MusicalWaterfall.git
+   git clone https://github.com/yourusername/MusicalBubbleColumn.git
    ```
 2. 安装所需的依赖：
    ```bash
@@ -25,7 +25,7 @@ MusicalWaterfall是一个基于Python的3D音乐可视化项目，旨在通过�
 
 运行主程序以开始可视化：
 ```bash
-python musicalwaterfall.py
+python musicalbubblecolumn.py
 ```
 
 根据提示选择是否可视化虚拟钢琴，并输入MIDI文件路径。
