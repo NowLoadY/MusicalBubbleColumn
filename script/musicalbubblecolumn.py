@@ -16,18 +16,17 @@ import os.path as os_path
 import pygame.midi
 from PyQt5.QtWidgets import QApplication, QFileDialog
 import sys
+from scipy.spatial import cKDTree
+from PyQt5 import QtCore
 
 
 class PatternVisualizer3D:
     def __init__(self, visualize_piano=False, pos_type="Fibonacci", draw_index=False, orientation="up"):
         self.orientation=orientation
-        self.elev = 30
-        self.target_elev = 30
-        self.target_azim_speed = 2
         self.data_height = 40
         self.draw_index = draw_index
         self.pos_type = pos_type
-        self.total_center = (30, 30, self.data_height//2)
+        self.total_center = (0, 0, self.data_height//2)
         self.visualize_piano = visualize_piano
         self.working=True
         self._initialize_plot()
@@ -38,14 +37,12 @@ class PatternVisualizer3D:
         self.toolbar = self.fig.canvas.manager.toolbar
         self.toolbar.hide()
 
-    def update_elev(self, val):
-        self.target_elev = val
-
-    def update_azim(self, val):
-        self.target_azim_speed = val
-
     def _initialize_plot(self):
-        self.fig = plt.figure(facecolor='black', figsize=(5, 5))
+        self.elev = 30
+        self.target_elev = 30
+        self.azim_angle = 30
+        self.target_azim_speed = 2
+        self.fig = plt.figure(facecolor='black', figsize=(7, 8))
         self.fig.canvas.manager.window.setWindowTitle("🎼Musical Bubble Column!🎹")
         base_path = os_path.dirname(os_path.abspath(__file__))
         PATH_TO_ICON = os_path.join(base_path, "icon.png")
@@ -64,14 +61,13 @@ class PatternVisualizer3D:
         else:
             gs = GridSpec(1, 1)
             self.ax = self.fig.add_subplot(gs[0], projection='3d')
-        self.azim_angle = 30
         self.ax.view_init(elev=self.elev, azim=self.azim_angle)
-        plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
-        self._hide_axes_background()
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        self._hide_axes()
         self.ax.set_facecolor((0, 0, 0, 0))
-        self.ax.set_box_aspect([1, 1, 3])
+        self.ax.set_box_aspect([1, 1, 4])
         self.elev_slider = plt.axes([0.9, 0.2 if self.orientation=="down" else 0.1, 0.03, 0.6], facecolor='none')  # 创建滑条位置并设置颜色
-        self.elev_slider = plt.Slider(self.elev_slider, 'Elev', -90, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.05), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
+        self.elev_slider = plt.Slider(self.elev_slider, 'Elev', 0, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.05), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
         self.elev_slider.on_changed(self.update_elev)  # 绑定滑条变化事件
         self.azim_slider = plt.axes([0.2, 0.01 if self.orientation=="down" else 0.1, 0.6, 0.03], facecolor='none')  # 创建滑条位置并设置颜色
         self.azim_slider = plt.Slider(self.azim_slider, 'Azim', -5, 5, orientation='horizontal', valinit=self.target_azim_speed, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.05), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
@@ -82,10 +78,6 @@ class PatternVisualizer3D:
             self.piano_ax.set_ylim(0, 1)
             self.piano_ax.axis('off')
             self.piano_keys = self.piano_ax.bar(range(120), [1]*120, color='gray', edgecolor='black', width=0.5)
-
-    def handle_close(self, event):
-        plt.close(self.fig)
-        self.working = False
 
     def _initialize_data(self):
         # 动态data大小
@@ -98,28 +90,10 @@ class PatternVisualizer3D:
         print(f"required_size {required_size}")
         self.thickness_list = [0] * 120
         self.all_positions = set(self.position_list)
+        self.position_tree = cKDTree(self.position_list)  # 创建KD树
         self.opacity_dict = self._calculate_opacity()
 
-    def _hide_axes_background(self):
-        for axis in [self.ax.xaxis, self.ax.yaxis, self.ax.zaxis]:
-            axis.pane.fill = False
-            axis.set_pane_color((0, 0, 0, 0))
-
-    def update_view_angle(self):
-        self.ax.view_init(elev=self.elev, azim=self.azim_angle)
-
     def _generate_positions(self, num_positions, center_x, center_y, inner_radius, outer_radius, pos_type="Fibonacci"):
-        """
-        Generates a set of positions based on the specified pattern.
-        
-        :param num_positions: Number of positions to generate.
-        :param center_x: X-coordinate of the center.
-        :param center_y: Y-coordinate of the center.
-        :param inner_radius: Inner radius for position calculation.
-        :param outer_radius: Outer radius for position calculation.
-        :param pos_type: Type of position generation ("Fibonacci", "circle", "arc").
-        :return: List of (x, y) positions.
-        """
         positions = []
         
         if pos_type == "Fibonacci":
@@ -150,46 +124,83 @@ class PatternVisualizer3D:
                         positions.append((x, y))
                 outer_radius += 1
 
+        elif pos_type == "arc":
+            angle_start = 0  # 起始角度
+            angle_end = np.pi / 3  # 结束角度
+            angle_increment = (angle_end - angle_start) / num_positions
+            current_radius = inner_radius
+
+            def calculate_curvature(x1, y1, x2, y2, x3, y3):
+                # 计算三点的曲率
+                return abs((x2 - x1) * (y3 - y2) - (y2 - y1) * (x3 - x2)) / (
+                    ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 1.5
+                )
+
+            while len(positions) < num_positions:
+                positions.clear()
+                for i in range(num_positions):
+                    angle = angle_start + i * angle_increment
+                    x = int(center_x + current_radius * np.cos(angle))
+                    y = int(center_y + current_radius * np.sin(angle))
+                    if (x, y) not in positions:
+                        positions.append((x, y))
+                    else:
+                        current_radius += 0.5  # 增加半径以避免重复
+                        break  # 重新计算当前点
+
+                if len(positions) >= num_positions:
+                    # 检查曲率
+                    if len(positions) >= 3:
+                        x1, y1 = positions[0]
+                        x2, y2 = positions[len(positions) // 2]
+                        x3, y3 = positions[-1]
+                        curvature_start = calculate_curvature(x1, y1, x2, y2, x3, y3)
+                        curvature_end = calculate_curvature(x3, y3, x2, y2, x1, y1)
+                        print(1/curvature_start, 1/curvature_end)
+                        if abs(1/curvature_start - 1/curvature_end) < 0.01:  # 曲率差异阈值
+                            break
+                    current_radius += 0.5  # 增加半径以避免重复
+
         self._update_axis_limits(positions)
+        # 计算偏移量
+        min_x = min(pos[0] for pos in positions)
+        min_y = min(pos[1] for pos in positions)
+        self.offset = (-min_x, -min_y)
+        # 应用偏移量
+        positions = [(x + self.offset[0], y + self.offset[1]) for x, y in positions]
         return positions
-    
-    def _update_axis_limits(self, positions):
-        min_x, max_x = min(positions, key=lambda pos: pos[0])[0], max(positions, key=lambda pos: pos[0])[0]
-        min_y, max_y = min(positions, key=lambda pos: pos[1])[1], max(positions, key=lambda pos: pos[1])[1]
-        self.ax_xlim_min, self.ax_xlim_max = min_x, max_x
-        self.ax_ylim_min, self.ax_ylim_max = min_y, max_y
 
-    def _update_piano_keys(self, bit_array, volumes):
-        if self.visualize_piano:
-            for i, key in enumerate(self.piano_keys):
-                if bit_array[i]:
-                    alpha = min((volumes[i]*0.2+0.8*127) / 127, 1)  # velocity 的最大值为 127
-                    new_color = (1, 1, 1, alpha)
-                else:
-                    new_color = (1, 1, 1, 0.2)
-                if key.get_facecolor() != new_color:
-                    key.set_color(new_color)
+    def update_pattern(self, new_pattern, volumes, average_volume, radius=5):
+        if isinstance(new_pattern, bytes):
+            bit_array = np.unpackbits(np.frombuffer(new_pattern, dtype=np.uint8))
+        elif isinstance(new_pattern, list) and all(isinstance(coord, tuple) and len(coord) == 2 for coord in new_pattern):
+            bit_array = np.zeros(120, dtype=np.uint8)
+            for coord in new_pattern:
+                # 查找最近的坐标
+                adjusted_coord = (coord[0] + self.offset[0], coord[1] + self.offset[1])
+                dist, index = self.position_tree.query(adjusted_coord, distance_upper_bound=radius)
+                if dist != float('inf'):  # 如果找到在半径范围内的点
+                    bit_array[index] = 1
+        else:
+            raise ValueError("new_pattern must be either a bytes object or a list of (x, y) tuples.")
 
-    def update_pattern(self, new_pattern, volumes, average_volume):
-        bit_array = np.unpackbits(np.frombuffer(new_pattern, dtype=np.uint8))
         # 滚动 pattern_data的旧数据
-        self.pattern_data = np.roll(self.pattern_data, shift=-1 if self.orientation == "down" else 1, axis=0)  # 滚动更新 pattern_data
+        self.pattern_data = np.roll(self.pattern_data, shift=-1 if self.orientation == "down" else 1, axis=0)
         # 滚动 pattern_data_thickness的旧数据
-        self.pattern_data_thickness = np.roll(self.pattern_data_thickness, shift=-1 if self.orientation == "down" else 1, axis=0)  # 滚动更新 pattern_data_thickness
+        self.pattern_data_thickness = np.roll(self.pattern_data_thickness, shift=-1 if self.orientation == "down" else 1, axis=0)
         # 重置最后一层的pattern_data 和 pattern_data_thickness，淘汰边缘的旧数据
-        self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0  # 重置 pattern_data 的最后一层
-        self.pattern_data_thickness[-1 if self.orientation == "down" else 0, :, :] = 0  # 重置 pattern_data_thickness 的最后一层
-        self.azim_angle=(self.azim_angle-self.target_azim_speed)%360
-        self.elev = self.elev + (self.target_elev-self.elev)*0.1
+        self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0
+        self.pattern_data_thickness[-1 if self.orientation == "down" else 0, :, :] = 0
+        self.azim_angle = (self.azim_angle - self.target_azim_speed) % 360
+        self.elev = self.elev + (self.target_elev - self.elev) * 0.1
         self._update_data_layer(bit_array, volumes, average_volume)
         
         self.ax.cla()
-        self.ax.set_xlim(self.ax_xlim_min, self.ax_xlim_max)
-        self.ax.set_ylim(self.ax_ylim_min, self.ax_ylim_max)
-        self.ax.set_zlim(-5, self.data_height+5)
+        self.ax.set_zlim(0, self.data_height+2)
         self._hide_axes()
         self._draw_pattern()
-        self._update_piano_keys(bit_array, volumes)  # 更新虚拟钢琴显示
+        if self.visualize_piano:
+            self._update_piano_keys(bit_array, volumes)
         
         plt.pause(0.002)
 
@@ -218,47 +229,42 @@ class PatternVisualizer3D:
             else:
                 self.scaler = max(0, self.scaler - 0.01)
 
-    def _calculate_opacity(self):
-        # 根据位置顺序计算透明度
-        opacity_list = [(i / 120) * 0.9 for i in range(120)]
-        all_positions = self.all_positions
-        return {pos: opacity_list[self.position_list.index(pos)] for pos in all_positions}
-
     def _draw_pattern(self):
-        # 绘制顶层圆圈
+        # 第一层点集
         x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[-1 if self.orientation=="down" else 0]))  # 使用 pattern_data
         len_x = len(x)
-        opacity = [0.8]*len_x+[0.3]*len_x+[0.1]*len_x
-        size_list = [100]*len_x+[250]*len_x+[500]*len_x
-        x = np.append(np.append(x, x),x)
-        y = np.append(np.append(y, y),y)
-        if x.size > 0 and y.size > 0 and z.size > 0:
-            self.ax.scatter(x, y, self.data_height if self.orientation=="down" else 0, c=[(1, 1, 1, op) for op in opacity], marker='o', s=[sz for sz in size_list])
-        
-        # 绘制未激活的灰色点
-        all_positions = set(self.position_list)
+        opacity = [0.8]*len_x + [0.3]*len_x + [0.1]*len_x
+        size_list = [100]*len_x + [250]*len_x + [500]*len_x
+        x = np.append(np.append(x, x), x)
+        y = np.append(np.append(y, y), y)
+        # 底盘点集
+        # 获取非活动位置的坐标和透明度
         active_positions = set(zip(x, y))
-        inactive_positions = all_positions - active_positions
-        opacity_dict = self.opacity_dict
+        inactive_positions = self.all_positions - active_positions
+        ix_val, iy_val, inactive_opacity = [], [], []
         if inactive_positions:
-            inactive_with_opacity = [(ix_val, iy_val, opacity_dict[(ix_val, iy_val)]) 
-                                      for ix_val, iy_val in inactive_positions if (ix_val, iy_val) in opacity_dict]
+            inactive_with_opacity = [(ix_val, iy_val, self.opacity_dict[(ix_val, iy_val)]) 
+                                      for ix_val, iy_val in inactive_positions if (ix_val, iy_val) in self.opacity_dict]
             if inactive_with_opacity:
-                ix_val, iy_val, opacity = zip(*inactive_with_opacity)
-                self.ax.scatter(ix_val, iy_val, self.data_height if self.orientation=="down" else 0, c=[(1, 1, 1, op) for op in opacity], marker='o', s=5)
-                if self.draw_index:  # 绘制索引号
-                    for (x_val, y_val, _) in inactive_with_opacity:
-                        index_position = self.position_list.index((x_val, y_val))
-                        self.ax.text(x_val, y_val, self.data_height if self.orientation=="down" else 0, str(index_position), color='white', fontsize=6)
+                ix_val, iy_val, inactive_opacity = zip(*inactive_with_opacity)
         
+        # 合并所有点的坐标、透明度和大小
+        all_x = np.concatenate((x, np.array(ix_val)))
+        all_y = np.concatenate((y, np.array(iy_val)))
+        all_opacity = opacity + list(inactive_opacity)
+        all_sizes = size_list + [10] * len(ix_val)
+        
+        if all_x.size > 0 and all_y.size > 0:
+            self.ax.scatter(all_x - self.offset[0], all_y - self.offset[1], self.data_height if self.orientation=="down" else 0, c=[(1, 1, 1, op) for op in all_opacity], marker='o', s=all_sizes)
+
         # 绘制滚动的层
         all_x, all_y, all_z, all_sizes = [], [], [], []  # 用于存储大小的列表
         for i in range(1, self.data_height):
             x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[i]))
 
             if x.size > 0 and y.size > 0 and z.size > 0:
-                all_x.extend(x)
-                all_y.extend(y)
+                all_x.extend(x - self.offset[0])
+                all_y.extend(y - self.offset[1])
                 all_z.extend(z + i)  # 将 z 值加上层数
                 
                 # 获取对应位置的厚度值
@@ -273,18 +279,54 @@ class PatternVisualizer3D:
         if all_x:  # 如果有点需要绘制
             self.ax.scatter(all_x, all_y, all_z, c='white', marker='o', s=all_sizes)
             
-        # 绘制落地的层
+        # 绘制最后一层
         x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[0 if self.orientation=="down" else self.data_height-1]))
         if x.size > 0 and y.size > 0 and z.size > 0:
-            self.ax.scatter(x, y, z if self.orientation=="down" else self.data_height, c='white', marker='*', s=200)
+            self.ax.scatter(x - self.offset[0], y - self.offset[1], z if self.orientation=="down" else self.data_height, c='white', marker='*', s=200)
+
+    def handle_close(self, event):
+        plt.close(self.fig)
+        self.working = False
+
+    def update_elev(self, val):
+        self.target_elev = val
+
+    def update_azim(self, val):
+        self.target_azim_speed = val
+
+    def update_view_angle(self):
+        self.ax.view_init(elev=self.elev, azim=self.azim_angle)
+
+    def _update_axis_limits(self, positions):
+        min_x, max_x = min(positions, key=lambda pos: pos[0])[0], max(positions, key=lambda pos: pos[0])[0]
+        min_y, max_y = min(positions, key=lambda pos: pos[1])[1], max(positions, key=lambda pos: pos[1])[1]
+        self.ax_xlim_min, self.ax_xlim_max = min_x, max_x
+        self.ax_ylim_min, self.ax_ylim_max = min_y, max_y
+
+    def _update_piano_keys(self, bit_array, volumes):
+        for i, key in enumerate(self.piano_keys):
+            if bit_array[i]:
+                alpha = min((volumes[i]*0.2+0.8*127) / 127, 1)  # velocity 的最大值为 127
+                new_color = (1, 1, 1, alpha)
+            else:
+                new_color = (1, 1, 1, 0.2)
+            if key.get_facecolor() != new_color:
+                key.set_color(new_color)
+
+    def _calculate_opacity(self):
+        # 根据位置顺序计算透明度
+        opacity_list = [(i / 120) * 0.9 for i in range(120)]
+        all_positions = self.all_positions
+        return {pos: opacity_list[self.position_list.index(pos)] for pos in all_positions}
 
     def _hide_axes(self):
         for axis in [self.ax.xaxis, self.ax.yaxis, self.ax.zaxis]:
+            axis.pane.fill = False
+            axis.set_pane_color((0, 0, 0, 0))
             axis.set_major_formatter(plt.NullFormatter())
             axis.set_visible(False)
             axis.line.set_visible(False)  # 隐藏坐标轴线
             axis.set_ticks([])  # 隐藏刻度线
-
 
 def action_midi_visualization(visualizer, midi_path):
     temp_midi_path = "temp_midi_file.mid"  # 定义临时MIDI文件路径
@@ -368,9 +410,7 @@ def action_midi_visualization(visualizer, midi_path):
     midi_thread.join()
     pygame.mixer.music.stop()
 
-def choose_midi_file():
-    app = QApplication(sys.argv)
-
+def choose_midi_file(app):
     # 设置全局样式表
     app.setStyleSheet("""
         QFileDialog {
@@ -406,25 +446,26 @@ def choose_midi_file():
     dialog.setFileMode(QFileDialog.ExistingFile)  # 只允许选择现有文件
     dialog.setViewMode(QFileDialog.List)
     dialog.resize(1200, 1200)  # 设置默认窗口大小
+    dialog.setWindowFlags(dialog.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)  # 设置窗口置顶
     if dialog.exec_() == QFileDialog.Accepted:
         midi_file_path = dialog.selectedFiles()[0]
     else:
         midi_file_path = None
-
     return midi_file_path
 
 
 if __name__ == "__main__":
     pygame.init()
     pygame.midi.init()
+    app = QApplication(sys.argv)  # 在主线程中创建 QApplication 实例
     visualizer = None
 
     while True:
-        midi_file_path = choose_midi_file()  # 弹出文件选择对话框让用户选择MIDI文件
+        midi_file_path = choose_midi_file(app)  # 传递 app 实例
 
         if visualizer:
             plt.close(visualizer.fig)
-        visualizer = PatternVisualizer3D(visualize_piano=False, orientation="up", pos_type="Fibonacci")  # Fibonacci
+        visualizer = PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
         if midi_file_path:
             action_midi_visualization(visualizer, midi_file_path)
         else:
