@@ -323,6 +323,10 @@ def calculate_bubble(pattern_data, pattern_data_thickness, data_height):
                 pattern_data_thickness_temp[target_layer][ix, iy] = th  # 更新新位置的厚度
             pattern_data_temp[target_layer, ix, iy] = 1  # 使气泡上升
 
+            # 根据高度调整气泡大小
+            size_increase = 1 + (target_layer / data_height) * 0.05  # 高度带来的大小加成
+            pattern_data_thickness_temp[target_layer][ix, iy] *= size_increase  # 调整厚度以反映大小变化
+
     # 合并相邻气泡
     for layer in range(data_height):
         x, y = np.nonzero(pattern_data_temp[layer])  # 获取当前层的气泡位置
