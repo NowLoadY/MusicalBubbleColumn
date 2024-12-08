@@ -166,7 +166,7 @@ class PatternVisualizer3D:
 
     def _update_data_layer(self, bit_array, volumes, average_volume):
         variances = add_pattern(bit_array, volumes, average_volume, self.position_list, self.final_volume, self.final_volume_index, self.scaler, self.thickness_list, self.pattern_data, self.pattern_data_thickness, self.orientation)
-        pattern_data_temp, pattern_data_thickness_temp = calculate_bubble_rise(self.pattern_data, self.pattern_data_thickness, self.data_height)
+        pattern_data_temp, pattern_data_thickness_temp = calculate_bubble(self.pattern_data, self.pattern_data_thickness, self.data_height)
 
         # 更新非边缘层
         for layer in range(1, self.data_height):
@@ -210,19 +210,20 @@ class PatternVisualizer3D:
 
         # 绘制滚动的层
         all_x, all_y, all_z, all_sizes = [], [], [], []  # 用于存储大小的列表
-        for i in range(1, self.data_height):
-            x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[i]))
-
-            if x.size > 0 and y.size > 0 and z.size > 0:
-                all_x.extend(x - self.offset[0])
-                all_y.extend(y - self.offset[1])
-                all_z.extend(z + i)  # 将 z 值加上层数
-                
-                # 获取对应位置的厚度值
-                thickness = self.pattern_data_thickness[i][x, y]  # 使用索引获取厚度值
-                sizes = np.clip(thickness * 5, 0, 500)  # 根据需求调整厚度到大小的映射
-                
-                all_sizes.extend(sizes)  # 将大小添加到列表中
+        # 获取所有非零点的坐标
+        nonzero_indices = np.nonzero(self.pattern_data[1:self.data_height])  # 从第一层到最后一层
+        x, y, z = nonzero_indices[1], nonzero_indices[2], nonzero_indices[0] + 1  # z 值加上层数
+        
+        if x.size > 0 and y.size > 0 and z.size > 0:
+            all_x.extend(x - self.offset[0])
+            all_y.extend(y - self.offset[1])
+            all_z.extend(z)  # z 值已经加上层数
+            
+            # 获取对应位置的厚度值
+            thickness = self.pattern_data_thickness[1:self.data_height][nonzero_indices]  # 使用索引获取厚度值
+            sizes = np.clip(thickness * 5, 0, 500)  # 根据需求调整厚度到大小的映射
+            
+            all_sizes.extend(sizes)  # 将大小添加到列表中
 
         if all_x:  # 如果有点需要绘制
             self.ax.scatter(all_x, all_y, all_z, c='white', marker='o', s=all_sizes)
@@ -297,7 +298,7 @@ def add_pattern(bit_array, volumes, average_volume, position_list, final_volume,
     return variances
 
 @njit
-def calculate_bubble_rise(pattern_data, pattern_data_thickness, data_height):
+def calculate_bubble(pattern_data, pattern_data_thickness, data_height):
     # 针对每个非边缘层的气泡计算上升速度
     pattern_data_temp = np.zeros(pattern_data.shape, dtype=np.float32)
     pattern_data_thickness_temp = np.zeros(pattern_data_thickness.shape, dtype=np.float32)
@@ -310,13 +311,36 @@ def calculate_bubble_rise(pattern_data, pattern_data_thickness, data_height):
         thickness = pattern_data_thickness[layer]  # 获取当前气泡的厚度
         for ix, iy in zip(x, y):
             th = thickness[ix, iy]  # 获取厚度值
-            rise_speed = 5 + np.minimum(10 * (layer / (3 * data_height / 4)), 10) + np.minimum(th * 0.1, 5)  # 计算上升速度
-            rise_speed = np.clip(np.array(rise_speed), 0, 12)  # 限制上升速度的最大值
+            rise_speed = 5 + np.minimum(10 * (layer / (3 * data_height / 4)), 10) + np.minimum(th * 0.1, 8)  # 计算上升速度
+            rise_speed = np.clip(np.array(rise_speed), 0, 18)  # 限制上升速度的最大值
             target_layer = np.minimum(layer + rise_speed.astype(np.int32), data_height - 1)  # 目标层
 
-            # 更新目标层的气泡和厚度
+            # 检查目标位置是否已有气泡
+            if pattern_data_temp[target_layer, ix, iy] == 1:
+                # 如果有气泡，则将厚度相加
+                pattern_data_thickness_temp[target_layer][ix, iy] += th
+            else:
+                pattern_data_thickness_temp[target_layer][ix, iy] = th  # 更新新位置的厚度
             pattern_data_temp[target_layer, ix, iy] = 1  # 使气泡上升
-            pattern_data_thickness_temp[target_layer, ix, iy] += th  # 更新新位置的厚度
+
+    # 合并相邻气泡
+    for layer in range(data_height):
+        x, y = np.nonzero(pattern_data_temp[layer])  # 获取当前层的气泡位置
+        for i in range(len(x)):
+            for j in range(i + 1, len(x)):
+                # 计算气泡之间的距离
+                distance = np.sqrt((x[i] - x[j]) ** 2 + (y[i] - y[j]) ** 2)
+                if 2*distance < np.sqrt(pattern_data_thickness_temp[layer, x[i], y[i]] + pattern_data_thickness_temp[layer, x[j], y[j]]):
+                    # 合并气泡
+                    new_x = (x[i] + x[j]) // 2
+                    new_y = (y[i] + y[j]) // 2
+                    pattern_data_temp[layer, new_x, new_y] = 1
+                    pattern_data_thickness_temp[layer, new_x, new_y] = np.minimum(500, pattern_data_thickness_temp[layer, x[i], y[i]] + pattern_data_thickness_temp[layer, x[j], y[j]])  # 使用更新后的厚度
+                    # 移除原气泡及其厚度
+                    pattern_data_temp[layer, x[i], y[i]] = 0
+                    pattern_data_temp[layer, x[j], y[j]] = 0
+                    pattern_data_thickness_temp[layer, x[i], y[i]] = 0
+                    pattern_data_thickness_temp[layer, x[j], y[j]] = 0
 
     return pattern_data_temp, pattern_data_thickness_temp
 
