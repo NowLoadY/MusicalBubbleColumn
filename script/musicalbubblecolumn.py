@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from mido import MidiFile
 import pygame
-import math
 import threading
 from collections import deque
 from matplotlib.gridspec import GridSpec
@@ -19,6 +18,7 @@ import sys
 from scipy.spatial import cKDTree
 from PyQt5 import QtCore
 from numba import njit
+
 
 class PatternVisualizer3D:
     def __init__(self, visualize_piano=False, pos_type="Fibonacci", draw_index=False, orientation="up"):
@@ -32,8 +32,9 @@ class PatternVisualizer3D:
         self._initialize_plot()
         self.position_list = self._generate_positions(120, self.total_center[0], self.total_center[1], 1, 18, pos_type=self.pos_type)
         self._initialize_data()
-        self.scaler = 2
-        self.final_volume = deque(maxlen=30)
+        self.scaler = 1
+        self.final_volume = np.zeros(30)
+        self.final_volume_index = 0  # 用于跟踪数组的当前索引
         self.toolbar = self.fig.canvas.manager.toolbar
         self.toolbar.hide()
 
@@ -124,43 +125,6 @@ class PatternVisualizer3D:
                         positions.append((x, y))
                 outer_radius += 1
 
-        elif pos_type == "arc":
-            angle_start = 0  # 起始角度
-            angle_end = np.pi / 3  # 结束角度
-            angle_increment = (angle_end - angle_start) / num_positions
-            current_radius = inner_radius
-
-            def calculate_curvature(x1, y1, x2, y2, x3, y3):
-                # 计算三点的曲率
-                return abs((x2 - x1) * (y3 - y2) - (y2 - y1) * (x3 - x2)) / (
-                    ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 1.5
-                )
-
-            while len(positions) < num_positions:
-                positions.clear()
-                for i in range(num_positions):
-                    angle = angle_start + i * angle_increment
-                    x = int(center_x + current_radius * np.cos(angle))
-                    y = int(center_y + current_radius * np.sin(angle))
-                    if (x, y) not in positions:
-                        positions.append((x, y))
-                    else:
-                        current_radius += 0.5  # 增加半径以避免重复
-                        break  # 重新计算当前点
-
-                if len(positions) >= num_positions:
-                    # 检查曲率
-                    if len(positions) >= 3:
-                        x1, y1 = positions[0]
-                        x2, y2 = positions[len(positions) // 2]
-                        x3, y3 = positions[-1]
-                        curvature_start = calculate_curvature(x1, y1, x2, y2, x3, y3)
-                        curvature_end = calculate_curvature(x3, y3, x2, y2, x1, y1)
-                        print(1/curvature_start, 1/curvature_end)
-                        if abs(1/curvature_start - 1/curvature_end) < 0.01:  # 曲率差异阈值
-                            break
-                    current_radius += 0.5  # 增加半径以避免重复
-
         self._update_axis_limits(positions)
         # 计算偏移量
         min_x = min(pos[0] for pos in positions)
@@ -184,10 +148,6 @@ class PatternVisualizer3D:
         else:
             raise ValueError("new_pattern must be either a bytes object or a list of (x, y) tuples.")
 
-        # 滚动 pattern_data的旧数据
-        #self.pattern_data = np.roll(self.pattern_data, shift=-1 if self.orientation == "down" else 1, axis=0)
-        # 滚动 pattern_data_thickness的旧数据
-        #self.pattern_data_thickness = np.roll(self.pattern_data_thickness, shift=-1 if self.orientation == "down" else 1, axis=0)
         # 重置最后一层的pattern_data 和 pattern_data_thickness，淘汰边缘的旧数据
         self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0
         self.pattern_data_thickness[-1 if self.orientation == "down" else 0, :, :] = 0
@@ -205,36 +165,16 @@ class PatternVisualizer3D:
         plt.pause(0.002)
 
     def _update_data_layer(self, bit_array, volumes, average_volume):
-        variances = []
-        for i in range(120):
-            if bit_array[i]:
-                x_center, y_center = self.position_list[i]
-                volume_factor = ((volumes[i] - average_volume) / average_volume) if average_volume else 0
-                final_volume_piece = min(500, (math.pow(1+self.scaler * volume_factor,3)))
-                self.final_volume.append(final_volume_piece)
-                if len(self.final_volume) > 10:
-                    variance = np.var(self.final_volume)
-                    variances.append(variance)
-                
-                self.thickness_list[i] = int(final_volume_piece)  # 更新 thickness_list
-                total_thickness = self.thickness_list[i] + (1 * (119 - i)) // 119  # 让低音可视化气泡更大
-                # 将这次要可视化的数据赋予给data的最边缘一层
-                self.pattern_data[-1 if self.orientation=="down" else 0, x_center, y_center] = 1
-                self.pattern_data_thickness[-1 if self.orientation == "down" else 0, x_center, y_center] = total_thickness + 1
-
-
+        variances = add_pattern(bit_array, volumes, average_volume, self.position_list, self.final_volume, self.final_volume_index, self.scaler, self.thickness_list, self.pattern_data, self.pattern_data_thickness, self.orientation)
         pattern_data_temp, pattern_data_thickness_temp = calculate_bubble_rise(self.pattern_data, self.pattern_data_thickness, self.data_height)
-
 
         # 更新非边缘层
         for layer in range(1, self.data_height):
             self.pattern_data[layer] = pattern_data_temp[layer]
             self.pattern_data_thickness[layer] = pattern_data_thickness_temp[layer]
 
-
-
         if variances:
-            variances_threashhold = 20
+            variances_threashhold = 8
             if np.mean(variances) < variances_threashhold:  # 平均值阈值，根据需要调整
                 self.scaler += 0.01
             else:
@@ -254,8 +194,8 @@ class PatternVisualizer3D:
         inactive_positions = self.all_positions - active_positions
         ix_val, iy_val, inactive_opacity = [], [], []
         if inactive_positions:
-            inactive_with_opacity = [(ix_val, iy_val, self.opacity_dict[(ix_val, iy_val)]) 
-                                      for ix_val, iy_val in inactive_positions if (ix_val, iy_val) in self.opacity_dict]
+            inactive_with_opacity = [(ix_val, iy_val, self.opacity_dict[self.position_list.index((ix_val, iy_val))]) 
+                                      for ix_val, iy_val in inactive_positions]
             if inactive_with_opacity:
                 ix_val, iy_val, inactive_opacity = zip(*inactive_with_opacity)
         
@@ -279,11 +219,8 @@ class PatternVisualizer3D:
                 all_z.extend(z + i)  # 将 z 值加上层数
                 
                 # 获取对应位置的厚度值
-                sizes = []
-                for ix, iy in zip(x, y):
-                    thickness = self.pattern_data_thickness[i][ix, iy]  # 获取厚度值
-                    size = min(500, thickness * 5)  # 根据需求调整厚度到大小的映射
-                    sizes.append(size)
+                thickness = self.pattern_data_thickness[i][x, y]  # 使用索引获取厚度值
+                sizes = np.clip(thickness * 5, 0, 500)  # 根据需求调整厚度到大小的映射
                 
                 all_sizes.extend(sizes)  # 将大小添加到列表中
 
@@ -326,9 +263,8 @@ class PatternVisualizer3D:
 
     def _calculate_opacity(self):
         # 根据位置顺序计算透明度
-        opacity_list = [(i / 120) * 0.9 for i in range(120)]
-        all_positions = self.all_positions
-        return {pos: opacity_list[self.position_list.index(pos)] for pos in all_positions}
+        opacity_array = np.array([(i / 120) * 0.9 for i in range(120)])  # 使用 NumPy 数组
+        return opacity_array  # 直接返回 NumPy 数组
 
     def _hide_axes(self):
         for axis in [self.ax.xaxis, self.ax.yaxis, self.ax.zaxis]:
@@ -340,6 +276,27 @@ class PatternVisualizer3D:
             axis.set_ticks([])  # 隐藏刻度线
 
 @njit
+def add_pattern(bit_array, volumes, average_volume, position_list, final_volume, final_volume_index, scaler, thickness_list, pattern_data, pattern_data_thickness, orientation):
+    variances = []
+    active_indices = np.where(bit_array)[0]  # 获取活动索引
+    for i in active_indices:
+        x_center, y_center = position_list[i]
+        volume_factor = ((volumes[i] - average_volume) / average_volume) if average_volume else 0
+        final_volume_piece = min(500, (1 + scaler * volume_factor) ** 5)
+        final_volume[final_volume_index] = final_volume_piece
+        final_volume_index = (final_volume_index + 1) % 30
+        if final_volume_index == 0:
+            variance = np.var(final_volume)
+            variances.append(variance)
+
+        thickness_list[i] = int(final_volume_piece)
+        total_thickness = thickness_list[i] + (1 * (119 - i)) // 119
+        pattern_data[-1 if orientation == "down" else 0, x_center, y_center] = 1
+        pattern_data_thickness[-1 if orientation == "down" else 0, x_center, y_center] = total_thickness + 1
+
+    return variances
+
+@njit
 def calculate_bubble_rise(pattern_data, pattern_data_thickness, data_height):
     # 针对每个非边缘层的气泡计算上升速度
     pattern_data_temp = np.zeros(pattern_data.shape, dtype=np.float32)
@@ -347,7 +304,7 @@ def calculate_bubble_rise(pattern_data, pattern_data_thickness, data_height):
 
     for layer in range(0, data_height - 1):  # 遍历非边缘层
         x, y = np.nonzero(pattern_data[layer])  # 获取当前层的气泡位置
-        if x.size == 0:  # 如果当前层没有气泡，跳过
+        if x.size == 0:  # 如果当前层没有气泡，跳过当前层
             continue
         
         thickness = pattern_data_thickness[layer]  # 获取当前气泡的厚度
@@ -365,16 +322,14 @@ def calculate_bubble_rise(pattern_data, pattern_data_thickness, data_height):
 
 def action_midi_visualization(visualizer, midi_path):
     temp_midi_path = "temp_midi_file.mid"  # 定义临时MIDI文件路径
-    try:
-        midi = MidiFile(midi_path)
-        for track in midi.tracks:
-            for msg in track:
-                if msg.type == 'program_change':
-                    msg.program = 0  # 将音色更改为钢琴音色
-        midi.save(temp_midi_path)
-    except OSError as e:
-        print(f"Error loading MIDI file: {e}")
-        return
+
+    midi = MidiFile(midi_path)
+    for track in midi.tracks:
+        for msg in track:
+            if msg.type == 'program_change':
+                msg.program = 0  # 将音色更改为钢琴音色
+    midi.save(temp_midi_path)
+
     pygame.mixer.init()
     pygame.mixer.music.load(temp_midi_path)
     pygame.mixer.music.play()
@@ -386,39 +341,37 @@ def action_midi_visualization(visualizer, midi_path):
                 min_note, max_note = min(min_note, msg.note), max(max_note, msg.note)
 
     def map_note_to_range(note):
-        return max(0, min(int((note - min_note) / (max_note - min_note) * 120), 119))
+        note_array = np.clip((note - min_note) / (max_note - min_note) * 120, 0, 119)
+        return int(note_array)
 
     num_keys = 120
+    volumes = [0] * num_keys
+    average_volume = 0
     key_activation = np.zeros(num_keys, dtype=int)
     midi_iterator = iter(midi.play())
     new_pattern = bytes(15)
     zero_pattern_interval = 2
     update_count = 0
     process_midi_thread_bool=True
+
     def process_midi():
         nonlocal new_pattern, update_count, volumes, process_midi_thread_bool
         for msg in midi_iterator:
             if msg.type in ['note_on', 'note_off']:
                 mapped_note = map_note_to_range(msg.note)
                 if 0 <= mapped_note < num_keys:
-                    try:
-                        msg_velocity = msg.velocity
-                        key_activation[mapped_note] = 1 if (msg.type == 'note_on' and msg_velocity > 0) else 0
-                        volumes[mapped_note] = msg_velocity if msg.type == 'note_on' else 0
-                        total_volumes.append(msg_velocity)
-                    except:
-                        key_activation = np.zeros(num_keys, dtype=int)
+                    key_activation[mapped_note] = 1 if (msg.type == 'note_on' and msg.velocity > 0) else 0
+                    volumes[mapped_note] = msg.velocity if msg.type == 'note_on' else 0
+                    total_volumes.append(msg.velocity)
+
                 new_pattern = np.packbits(key_activation).tobytes()
                 update_count = 0
-            if not pygame.mixer.music.get_busy():
-                break
-            if not process_midi_thread_bool:
+            
+            if not pygame.mixer.music.get_busy() or not process_midi_thread_bool:
                 break
 
     midi_thread = threading.Thread(target=process_midi)
     midi_thread.start()
-    volumes = [0] * num_keys
-    average_volume = 0
 
     while True:
         visualizer.working = True
@@ -497,10 +450,13 @@ if __name__ == "__main__":
 
     while True:
         midi_file_path = choose_midi_file(app)  # 传递 app 实例
-
+        
         if visualizer:
             plt.close(visualizer.fig)
         visualizer = PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
+        new_pattern = bytes(15)
+        one_volumes = [1] * 120
+        visualizer.update_pattern(new_pattern, one_volumes, 0)
         if midi_file_path:
             action_midi_visualization(visualizer, midi_file_path)
         else:
