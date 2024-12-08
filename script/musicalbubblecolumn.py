@@ -18,12 +18,12 @@ from PyQt5.QtWidgets import QApplication, QFileDialog
 import sys
 from scipy.spatial import cKDTree
 from PyQt5 import QtCore
-
+from numba import njit
 
 class PatternVisualizer3D:
     def __init__(self, visualize_piano=False, pos_type="Fibonacci", draw_index=False, orientation="up"):
         self.orientation=orientation
-        self.data_height = 40
+        self.data_height = 560
         self.draw_index = draw_index
         self.pos_type = pos_type
         self.total_center = (0, 0, self.data_height//2)
@@ -42,7 +42,7 @@ class PatternVisualizer3D:
         self.target_elev = 30
         self.azim_angle = 30
         self.target_azim_speed = 2
-        self.fig = plt.figure(facecolor='black', figsize=(7, 8))
+        self.fig = plt.figure(facecolor='black', figsize=(6, 7))
         self.fig.canvas.manager.window.setWindowTitle("🎼Musical Bubble Column!🎹")
         base_path = os_path.dirname(os_path.abspath(__file__))
         PATH_TO_ICON = os_path.join(base_path, "icon.png")
@@ -84,10 +84,10 @@ class PatternVisualizer3D:
         max_x = max(abs(pos[0]) for pos in self.position_list)
         max_y = max(abs(pos[1]) for pos in self.position_list)
         max_size = max(max_x, max_y)
-        required_size = (self.data_height, max_size + 1, max_size + 1)  # +1 因为索引从 0 开始
-        self.pattern_data = np.zeros(required_size, dtype=np.float32)
-        self.pattern_data_thickness = np.zeros(required_size, dtype=np.float32)
-        print(f"required_size {required_size}")
+        self.pattern_data_required_size = (self.data_height, max_size + 1, max_size + 1)  # +1 因为索引从 0 开始
+        self.pattern_data = np.zeros(self.pattern_data_required_size, dtype=np.float32)
+        self.pattern_data_thickness = np.zeros(self.pattern_data_required_size, dtype=np.float32)
+        print(f"required_size {self.pattern_data_required_size}")
         self.thickness_list = [0] * 120
         self.all_positions = set(self.position_list)
         self.position_tree = cKDTree(self.position_list)  # 创建KD树
@@ -185,9 +185,9 @@ class PatternVisualizer3D:
             raise ValueError("new_pattern must be either a bytes object or a list of (x, y) tuples.")
 
         # 滚动 pattern_data的旧数据
-        self.pattern_data = np.roll(self.pattern_data, shift=-1 if self.orientation == "down" else 1, axis=0)
+        #self.pattern_data = np.roll(self.pattern_data, shift=-1 if self.orientation == "down" else 1, axis=0)
         # 滚动 pattern_data_thickness的旧数据
-        self.pattern_data_thickness = np.roll(self.pattern_data_thickness, shift=-1 if self.orientation == "down" else 1, axis=0)
+        #self.pattern_data_thickness = np.roll(self.pattern_data_thickness, shift=-1 if self.orientation == "down" else 1, axis=0)
         # 重置最后一层的pattern_data 和 pattern_data_thickness，淘汰边缘的旧数据
         self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0
         self.pattern_data_thickness[-1 if self.orientation == "down" else 0, :, :] = 0
@@ -220,7 +220,18 @@ class PatternVisualizer3D:
                 total_thickness = self.thickness_list[i] + (1 * (119 - i)) // 119  # 让低音可视化气泡更大
                 # 将这次要可视化的数据赋予给data的最边缘一层
                 self.pattern_data[-1 if self.orientation=="down" else 0, x_center, y_center] = 1
-                self.pattern_data_thickness[-1 if self.orientation == "down" else 0, x_center, y_center] = total_thickness+1
+                self.pattern_data_thickness[-1 if self.orientation == "down" else 0, x_center, y_center] = total_thickness + 1
+
+
+        pattern_data_temp, pattern_data_thickness_temp = calculate_bubble_rise(self.pattern_data, self.pattern_data_thickness, self.data_height)
+
+
+        # 更新非边缘层
+        for layer in range(1, self.data_height):
+            self.pattern_data[layer] = pattern_data_temp[layer]
+            self.pattern_data_thickness[layer] = pattern_data_thickness_temp[layer]
+
+
 
         if variances:
             variances_threashhold = 20
@@ -327,6 +338,30 @@ class PatternVisualizer3D:
             axis.set_visible(False)
             axis.line.set_visible(False)  # 隐藏坐标轴线
             axis.set_ticks([])  # 隐藏刻度线
+
+@njit
+def calculate_bubble_rise(pattern_data, pattern_data_thickness, data_height):
+    # 针对每个非边缘层的气泡计算上升速度
+    pattern_data_temp = np.zeros(pattern_data.shape, dtype=np.float32)
+    pattern_data_thickness_temp = np.zeros(pattern_data_thickness.shape, dtype=np.float32)
+
+    for layer in range(0, data_height - 1):  # 遍历非边缘层
+        x, y = np.nonzero(pattern_data[layer])  # 获取当前层的气泡位置
+        if x.size == 0:  # 如果当前层没有气泡，跳过
+            continue
+        
+        thickness = pattern_data_thickness[layer]  # 获取当前气泡的厚度
+        for ix, iy in zip(x, y):
+            th = thickness[ix, iy]  # 获取厚度值
+            rise_speed = 5 + np.minimum(10 * (layer / (3 * data_height / 4)), 10) + np.minimum(th * 0.1, 5)  # 计算上升速度
+            rise_speed = np.clip(np.array(rise_speed), 0, 12)  # 限制上升速度的最大值
+            target_layer = np.minimum(layer + rise_speed.astype(np.int32), data_height - 1)  # 目标层
+
+            # 更新目标层的气泡和厚度
+            pattern_data_temp[target_layer, ix, iy] = 1  # 使气泡上升
+            pattern_data_thickness_temp[target_layer, ix, iy] += th  # 更新新位置的厚度
+
+    return pattern_data_temp, pattern_data_thickness_temp
 
 def action_midi_visualization(visualizer, midi_path):
     temp_midi_path = "temp_midi_file.mid"  # 定义临时MIDI文件路径
