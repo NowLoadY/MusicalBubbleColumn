@@ -18,13 +18,13 @@ import sys
 from scipy.spatial import cKDTree
 from PyQt5 import QtCore
 from numba import njit
+import time
 
 
 class PatternVisualizer3D:
-    def __init__(self, visualize_piano=False, pos_type="Fibonacci", draw_index=False, orientation="up"):
+    def __init__(self, visualize_piano=False, pos_type="Fibonacci", orientation="up"):
         self.orientation=orientation
-        self.data_height = 560
-        self.draw_index = draw_index
+        self.data_height = 600
         self.pos_type = pos_type
         self.total_center = (0, 0, self.data_height//2)
         self.visualize_piano = visualize_piano
@@ -66,7 +66,7 @@ class PatternVisualizer3D:
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
         self._hide_axes()
         self.ax.set_facecolor((0, 0, 0, 0))
-        self.ax.set_box_aspect([1, 1, 4])
+        self.ax.set_box_aspect([1, 1, 3])
         self.elev_slider = plt.axes([0.9, 0.2 if self.orientation=="down" else 0.1, 0.03, 0.6], facecolor='none')  # 创建滑条位置并设置颜色
         self.elev_slider = plt.Slider(self.elev_slider, 'Elev', 0, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.05), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
         self.elev_slider.on_changed(self.update_elev)  # 绑定滑条变化事件
@@ -88,15 +88,14 @@ class PatternVisualizer3D:
         self.pattern_data_required_size = (self.data_height, max_size + 1, max_size + 1)  # +1 因为索引从 0 开始
         self.pattern_data = np.zeros(self.pattern_data_required_size, dtype=np.float32)
         self.pattern_data_thickness = np.zeros(self.pattern_data_required_size, dtype=np.float32)
-        print(f"required_size {self.pattern_data_required_size}")
         self.thickness_list = [0] * 120
         self.all_positions = set(self.position_list)
+        self.position_index = {pos: idx for idx, pos in enumerate(self.position_list)}
         self.position_tree = cKDTree(self.position_list)  # 创建KD树
         self.opacity_dict = self._calculate_opacity()
 
     def _generate_positions(self, num_positions, center_x, center_y, inner_radius, outer_radius, pos_type="Fibonacci"):
         positions = []
-        
         if pos_type == "Fibonacci":
             golden_angle = np.pi * (3 - np.sqrt(5))
             while len(positions) < num_positions:
@@ -162,16 +161,15 @@ class PatternVisualizer3D:
         if self.visualize_piano:
             self._update_piano_keys(bit_array, volumes)
         
-        plt.pause(0.002)
+        plt.pause(0.003)
 
     def _update_data_layer(self, bit_array, volumes, average_volume):
         variances = add_pattern(bit_array, volumes, average_volume, self.position_list, self.final_volume, self.final_volume_index, self.scaler, self.thickness_list, self.pattern_data, self.pattern_data_thickness, self.orientation)
         pattern_data_temp, pattern_data_thickness_temp = calculate_bubble(self.pattern_data, self.pattern_data_thickness, self.data_height)
 
-        # 更新非边缘层
-        for layer in range(1, self.data_height):
-            self.pattern_data[layer] = pattern_data_temp[layer]
-            self.pattern_data_thickness[layer] = pattern_data_thickness_temp[layer]
+        # 使用 NumPy 向量化操作更新非边缘层
+        self.pattern_data[1:self.data_height] = pattern_data_temp[1:self.data_height]
+        self.pattern_data_thickness[1:self.data_height] = pattern_data_thickness_temp[1:self.data_height]
 
         if variances:
             variances_threashhold = 8
@@ -184,54 +182,69 @@ class PatternVisualizer3D:
         # 第一层点集
         x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[-1 if self.orientation=="down" else 0]))  # 使用 pattern_data
         len_x = len(x)
-        opacity = [0.8]*len_x + [0.3]*len_x + [0.1]*len_x
-        size_list = [100]*len_x + [250]*len_x + [500]*len_x
-        x = np.append(np.append(x, x), x)
-        y = np.append(np.append(y, y), y)
+
+        # 优化 opacity 和 size_list 的计算
+        opacity = np.concatenate((np.full(len_x, 0.8), np.full(len_x, 0.3), np.full(len_x, 0.1)))
+        size_list = np.concatenate((np.full(len_x, 100), np.full(len_x, 250), np.full(len_x, 500)))
+
+        x = np.concatenate((x, x, x))  # 使用一次性合并
+        y = np.concatenate((y, y, y))
         # 底盘点集
         # 获取非活动位置的坐标和透明度
-        active_positions = set(zip(x, y))
-        inactive_positions = self.all_positions - active_positions
+        # 使用 NumPy 数组来提高效率
+        active_positions = np.array(list(zip(x, y)))
+        inactive_positions = np.array(list(self.all_positions - set(map(tuple, active_positions))))
         ix_val, iy_val, inactive_opacity = [], [], []
-        if inactive_positions:
-            inactive_with_opacity = [(ix_val, iy_val, self.opacity_dict[self.position_list.index((ix_val, iy_val))]) 
-                                      for ix_val, iy_val in inactive_positions]
-            if inactive_with_opacity:
-                ix_val, iy_val, inactive_opacity = zip(*inactive_with_opacity)
-        
-        # 合并所有点的坐标、透明度和大小
-        all_x = np.concatenate((x, np.array(ix_val)))
-        all_y = np.concatenate((y, np.array(iy_val)))
-        all_opacity = opacity + list(inactive_opacity)
-        all_sizes = size_list + [10] * len(ix_val)
-        
-        if all_x.size > 0 and all_y.size > 0:
-            self.ax.scatter(all_x - self.offset[0], all_y - self.offset[1], self.data_height if self.orientation=="down" else 0, c=[(1, 1, 1, op) for op in all_opacity], marker='o', s=all_sizes)
+        if inactive_positions.size > 0:
+            for pos in inactive_positions:
+                ix_val.append(pos[0])
+                iy_val.append(pos[1])
+                if (pos[0], pos[1]) in self.position_index:
+                    inactive_opacity.append(self.opacity_dict[self.position_index[(pos[0], pos[1])]])
 
+        # 合并所有点的坐标、透明度和大小
+        step1_all_x = np.concatenate((x, np.array(ix_val))) - self.offset[0]
+        step1_all_y = np.concatenate((y, np.array(iy_val))) - self.offset[1]
+        step1_all_opacity = np.concatenate((opacity, inactive_opacity))
+        step1_all_sizes = np.concatenate((size_list, np.full(len(ix_val), 10)))
+        
         # 绘制滚动的层
-        all_x, all_y, all_z, all_sizes = [], [], [], []  # 用于存储大小的列表
+        step2_all_x = np.empty(0)  # 初始化为 NumPy 数组
+        step2_all_y = np.empty(0)
+        step2_all_z = np.empty(0)
+        step2_all_sizes = []  # 用于存储大小的列表
         # 获取所有非零点的坐标
         nonzero_indices = np.nonzero(self.pattern_data[1:self.data_height])  # 从第一层到最后一层
         x, y, z = nonzero_indices[1], nonzero_indices[2], nonzero_indices[0] + 1  # z 值加上层数
         
-        if x.size > 0 and y.size > 0 and z.size > 0:
-            all_x.extend(x - self.offset[0])
-            all_y.extend(y - self.offset[1])
-            all_z.extend(z)  # z 值已经加上层数
+        if x.size > 0:
+            step2_all_x = np.concatenate((step2_all_x, x - self.offset[0]))
+            step2_all_y = np.concatenate((step2_all_y, y - self.offset[1]))
+            step2_all_z = np.concatenate((step2_all_z, z))
             
             # 获取对应位置的厚度值
             thickness = self.pattern_data_thickness[1:self.data_height][nonzero_indices]  # 使用索引获取厚度值
             sizes = np.clip(thickness * 5, 0, 500)  # 根据需求调整厚度到大小的映射
             
-            all_sizes.extend(sizes)  # 将大小添加到列表中
+            step2_all_sizes.extend(sizes)  # 将大小添加到列表中
+        
+        # 合并 step1 和 step2 的数据
+        all_x = np.concatenate((step1_all_x, step2_all_x))
+        all_y = np.concatenate((step1_all_y, step2_all_y))
+        all_z = np.concatenate((np.full(len(step1_all_x), self.data_height) if self.orientation == "down" else np.zeros(len(step1_all_x)), step2_all_z))
+        all_sizes = np.concatenate((step1_all_sizes, step2_all_sizes))
+        
+        if len(step2_all_x) > 0:
+            all_opacity = np.concatenate((step1_all_opacity, np.ones(len(step2_all_x))))
+        else:
+            all_opacity = step1_all_opacity
 
-        if all_x:  # 如果有点需要绘制
-            self.ax.scatter(all_x, all_y, all_z, c='white', marker='o', s=all_sizes)
-            
+        self.ax.scatter(all_x, all_y, all_z, c=[(1, 1, 1, op) for op in all_opacity], marker='o', s=all_sizes)
+
         # 绘制最后一层
-        x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[0 if self.orientation=="down" else self.data_height-1]))
-        if x.size > 0 and y.size > 0 and z.size > 0:
-            self.ax.scatter(x - self.offset[0], y - self.offset[1], z if self.orientation=="down" else self.data_height, c='white', marker='*', s=200)
+        #x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[0 if self.orientation=="down" else self.data_height-1]))
+        #if x.size > 0 and y.size > 0 and z.size > 0:
+            #self.ax.scatter(x - self.offset[0], y - self.offset[1], z if self.orientation=="down" else self.data_height, c='white', marker='*', s=200)
 
     def handle_close(self, event):
         plt.close(self.fig)
@@ -385,7 +398,7 @@ def action_midi_visualization(visualizer, midi_path):
     def process_midi():
         nonlocal new_pattern, update_count, volumes, process_midi_thread_bool
         for msg in midi_iterator:
-            if msg.type in ['note_on', 'note_off']:
+            if msg.type in ['note_on']:
                 mapped_note = map_note_to_range(msg.note)
                 if 0 <= mapped_note < num_keys:
                     key_activation[mapped_note] = 1 if (msg.type == 'note_on' and msg.velocity > 0) else 0
@@ -401,6 +414,8 @@ def action_midi_visualization(visualizer, midi_path):
     midi_thread = threading.Thread(target=process_midi)
     midi_thread.start()
 
+    last_time = time.time()
+    fps = 0
     while True:
         visualizer.working = True
         if total_volumes:
@@ -413,15 +428,19 @@ def action_midi_visualization(visualizer, midi_path):
             visualizer.update_pattern(new_pattern, volumes, average_volume)
         update_count += 1
         
-        # 检查 MIDI 是否仍在播放
         if not pygame.mixer.music.get_busy() and np.sum(visualizer.pattern_data) == 0:
             visualizer.working = False
-
             break  # 如果 MIDI 播放完且数据已清空，则退出
         visualizer.update_view_angle()
         if not visualizer.working:
             process_midi_thread_bool=False
             break
+        
+        # 计算FPS
+        current_time = time.time()
+        fps = int(1 / (current_time - last_time))
+        print(f"FPS: {fps}")
+        last_time = current_time
 
     midi_thread.join()
     pygame.mixer.music.stop()
@@ -482,9 +501,7 @@ if __name__ == "__main__":
         if visualizer:
             plt.close(visualizer.fig)
         visualizer = PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
-        new_pattern = bytes(15)
-        one_volumes = [1] * 120
-        visualizer.update_pattern(new_pattern, one_volumes, 0)
+        visualizer.update_pattern(bytes(15), [1] * 120, 0)  # 初始化
         if midi_file_path:
             action_midi_visualization(visualizer, midi_file_path)
         else:
