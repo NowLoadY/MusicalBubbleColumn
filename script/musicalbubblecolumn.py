@@ -13,24 +13,24 @@ from matplotlib.gridspec import GridSpec
 from PyQt5 import QtGui
 import os.path as os_path
 import pygame.midi
-from PyQt5.QtWidgets import QApplication, QFileDialog
+from PyQt5.QtWidgets import QApplication, QFileDialog, QProgressDialog
 import sys
-from scipy.spatial import cKDTree
+#from scipy.spatial import cKDTree
 from PyQt5 import QtCore
 from numba import njit
-import time
+#import time
 
 
 class PatternVisualizer3D:
     def __init__(self, visualize_piano=False, pos_type="Fibonacci", orientation="up"):
         self.orientation=orientation
-        self.data_height = 600
+        self.data_height = 300
         self.pos_type = pos_type
         self.total_center = (0, 0, self.data_height//2)
         self.visualize_piano = visualize_piano
         self.working=True
         self._initialize_plot()
-        self.position_list = self._generate_positions(120, self.total_center[0], self.total_center[1], 1, 18, pos_type=self.pos_type)
+        self.position_list = self._generate_positions(120, self.total_center[0], self.total_center[1], 2, 36, pos_type=self.pos_type)
         self._initialize_data()
         self.scaler = 1
         self.final_volume = np.zeros(30)
@@ -42,14 +42,15 @@ class PatternVisualizer3D:
         self.elev = 30
         self.target_elev = 30
         self.azim_angle = 30
-        self.target_azim_speed = 2
-        self.fig = plt.figure(facecolor='black', figsize=(6, 6))
+        self.target_azim_speed = 1
+        self.fig = plt.figure(facecolor=(0,0,60/255,1), figsize=(7, 7))
         self.fig.canvas.manager.window.setWindowTitle("🎼Musical Bubble Column!🎹")
-        base_path = os_path.dirname(os_path.abspath(__file__))
-        PATH_TO_ICON = os_path.join(base_path, "icon.png")
+        self.toolbar = self.fig.canvas.manager.toolbar
+        self.toolbar.hide()
         new_icon = QtGui.QIcon(PATH_TO_ICON)
         fig = plt.gcf()
         fig.canvas.manager.window.setWindowIcon(QtGui.QIcon(new_icon))
+        self.fig.canvas.manager.window.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)  # 设置窗口置顶
         if self.visualize_piano:
             if self.orientation == "down":
                 gs = GridSpec(2, 1, height_ratios=[1, 30])
@@ -65,13 +66,13 @@ class PatternVisualizer3D:
         self.ax.view_init(elev=self.elev, azim=self.azim_angle)
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
         self._hide_axes()
-        self.ax.set_facecolor((0, 0, 0, 0))
+        self.ax.set_facecolor((0, 0, 60/255, 1))
         self.ax.set_box_aspect([1, 1, 3])
-        self.elev_slider = plt.axes([0.9, 0.2 if self.orientation=="down" else 0.1, 0.03, 0.6], facecolor='none')  # 创建滑条位置并设置颜色
-        self.elev_slider = plt.Slider(self.elev_slider, 'Elev', 0, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.05), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
+        self.elev_slider = plt.axes([0.9, 0.1, 0.03, 0.8], facecolor='none')  # 创建滑条位置并设置颜色
+        self.elev_slider = plt.Slider(self.elev_slider, '', 0, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
         self.elev_slider.on_changed(self.update_elev)  # 绑定滑条变化事件
         self.azim_slider = plt.axes([0.2, 0.01 if self.orientation=="down" else 0.1, 0.6, 0.03], facecolor='none')  # 创建滑条位置并设置颜色
-        self.azim_slider = plt.Slider(self.azim_slider, 'Azim', -5, 5, orientation='horizontal', valinit=self.target_azim_speed, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.05), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
+        self.azim_slider = plt.Slider(self.azim_slider, '', -5, 5, orientation='horizontal', valinit=self.target_azim_speed, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
         self.azim_slider.on_changed(self.update_azim)  # 绑定滑条变化事件
         self.fig.canvas.mpl_connect('close_event', self.handle_close)
         if self.visualize_piano:
@@ -91,7 +92,7 @@ class PatternVisualizer3D:
         self.thickness_list = [0] * 120
         self.all_positions = set(self.position_list)
         self.position_index = {pos: idx for idx, pos in enumerate(self.position_list)}
-        self.position_tree = cKDTree(self.position_list)  # 创建KD树
+        #self.position_tree = cKDTree(self.position_list)  # 创建KD树
         self.opacity_dict = self._calculate_opacity()
 
     def _generate_positions(self, num_positions, center_x, center_y, inner_radius, outer_radius, pos_type="Fibonacci"):
@@ -134,16 +135,20 @@ class PatternVisualizer3D:
         return positions
 
     def update_pattern(self, new_pattern, volumes, average_volume, radius=5):
+        # 检查绘图窗口是否仍然打开
+        if not plt.fignum_exists(self.fig.number):
+            self._initialize_plot()  # 重新初始化绘图窗口
+            self._initialize_data()
         if isinstance(new_pattern, bytes):
             bit_array = np.unpackbits(np.frombuffer(new_pattern, dtype=np.uint8))
-        elif isinstance(new_pattern, list) and all(isinstance(coord, tuple) and len(coord) == 2 for coord in new_pattern):
-            bit_array = np.zeros(120, dtype=np.uint8)
-            for coord in new_pattern:
-                # 查找最近的坐标
-                adjusted_coord = (coord[0] + self.offset[0], coord[1] + self.offset[1])
-                dist, index = self.position_tree.query(adjusted_coord, distance_upper_bound=radius)
-                if dist != float('inf'):  # 如果找到在半径范围内的点
-                    bit_array[index] = 1
+        # elif isinstance(new_pattern, list) and all(isinstance(coord, tuple) and len(coord) == 2 for coord in new_pattern):
+        #     bit_array = np.zeros(120, dtype=np.uint8)
+        #     for coord in new_pattern:
+        #         # 查找最近的坐标
+        #         adjusted_coord = (coord[0] + self.offset[0], coord[1] + self.offset[1])
+        #         dist, index = self.position_tree.query(adjusted_coord, distance_upper_bound=radius)
+        #         if dist != float('inf'):  # 如果找到在半径范围内的点
+        #             bit_array[index] = 1
         else:
             raise ValueError("new_pattern must be either a bytes object or a list of (x, y) tuples.")
 
@@ -239,7 +244,7 @@ class PatternVisualizer3D:
         else:
             all_opacity = step1_all_opacity
 
-        self.ax.scatter(all_x, all_y, all_z, c=[(1, 1, 1, op) for op in all_opacity], marker='o', s=all_sizes)
+        self.ax.scatter(all_x, all_y, all_z, c=[(229/255, 248/255, 1, op) for op in all_opacity], marker='o', s=all_sizes)
 
         # 绘制最后一层
         #x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[0 if self.orientation=="down" else self.data_height-1]))
@@ -322,23 +327,31 @@ def calculate_bubble(pattern_data, pattern_data_thickness, data_height):
             continue
         
         thickness = pattern_data_thickness[layer]  # 获取当前气泡的厚度
+        # 获取 pattern_data_temp 的形状
+        max_x = pattern_data_temp.shape[1] - 1
+        max_y = pattern_data_temp.shape[2] - 1
         for ix, iy in zip(x, y):
             th = thickness[ix, iy]  # 获取厚度值
             rise_speed = 5 + np.minimum(10 * (layer / (3 * data_height / 4)), 10) + np.minimum(th * 0.1, 8)  # 计算上升速度
             rise_speed = np.clip(np.array(rise_speed), 0, 18)  # 限制上升速度的最大值
             target_layer = np.minimum(layer + rise_speed.astype(np.int32), data_height - 1)  # 目标层
 
+            # 添加轻微的抖动效果
+            jitter_x = np.random.randint(-1, 2)  # 随机抖动 -1, 0, 1
+            jitter_y = np.random.randint(-1, 2)  # 随机抖动 -1, 0, 1
+            target_x = np.maximum(0, np.minimum(ix + jitter_x, max_x))  # 确保不超出范围
+            target_y = np.maximum(0, np.minimum(iy + jitter_y, max_y))  # 确保不超出范围
             # 检查目标位置是否已有气泡
-            if pattern_data_temp[target_layer, ix, iy] == 1:
+            if pattern_data_temp[target_layer, target_x, target_y] == 1:
                 # 如果有气泡，则将厚度相加
-                pattern_data_thickness_temp[target_layer][ix, iy] += th
+                pattern_data_thickness_temp[target_layer][target_x, target_y] += th
             else:
-                pattern_data_thickness_temp[target_layer][ix, iy] = th  # 更新新位置的厚度
-            pattern_data_temp[target_layer, ix, iy] = 1  # 使气泡上升
+                pattern_data_thickness_temp[target_layer][target_x, target_y] = th  # 更新新位置的厚度
+            pattern_data_temp[target_layer, target_x, target_y] = 1  # 使气泡上升
 
             # 根据高度调整气泡大小
             size_increase = 1 + (target_layer / data_height) * 0.05  # 高度带来的大小加成
-            pattern_data_thickness_temp[target_layer][ix, iy] *= size_increase  # 调整厚度以反映大小变化
+            pattern_data_thickness_temp[target_layer][target_x, target_y] *= size_increase  # 调整厚度以反映大小变化
 
     # 合并相邻气泡
     for layer in range(data_height):
@@ -414,8 +427,8 @@ def action_midi_visualization(visualizer, midi_path):
     midi_thread = threading.Thread(target=process_midi)
     midi_thread.start()
 
-    last_time = time.time()
-    fps = 0
+    #last_time = time.time()
+    #fps = 0
     while True:
         visualizer.working = True
         if total_volumes:
@@ -437,10 +450,10 @@ def action_midi_visualization(visualizer, midi_path):
             break
         
         # 计算FPS
-        current_time = time.time()
-        fps = int(1 / (current_time - last_time))
-        print(f"FPS: {fps}")
-        last_time = current_time
+        #current_time = time.time()
+        #fps = int(1 / (current_time - last_time))
+        #print(f"FPS: {fps}")
+        #last_time = current_time
 
     midi_thread.join()
     pygame.mixer.music.stop()
@@ -494,15 +507,55 @@ if __name__ == "__main__":
     pygame.midi.init()
     app = QApplication(sys.argv)  # 在主线程中创建 QApplication 实例
     visualizer = None
-
+    base_path = os_path.dirname(os_path.abspath(__file__))
+    PATH_TO_ICON = os_path.join(base_path, "icon.png")
     while True:
         midi_file_path = choose_midi_file(app)  # 传递 app 实例
         
-        if visualizer:
-            plt.close(visualizer.fig)
-        visualizer = PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
-        visualizer.update_pattern(bytes(15), [1] * 120, 0)  # 初始化
         if midi_file_path:
+            # 使用 QProgressDialog 作为加载提示框
+            if not visualizer:
+                loading_msg = QProgressDialog("正在预编译糟糕的函数...", None, 0, 0)  # 创建进度对话框
+                loading_msg.setWindowTitle("Musical Bubble Column!")
+                loading_msg.setCancelButton(None)  # 不显示取消按钮
+                loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)  # 设置窗口置顶
+                loading_msg.setMinimumSize(600, 100)  # 设置最小大小
+                loading_msg.setStyleSheet("""
+                    QProgressDialog {
+                        background-color: #f0f0f0;  /* 背景颜色 */
+                        color: #333;  /* 字体颜色 */
+                        font-size: 32px;  /* 字体大小 */
+                        font-family: 'Arial';  /* 字体类型 */
+                    }
+                    QProgressBar {
+                        text-align: center;  /* 文本居中 */
+                        background-color: #e0e0e0;  /* 进度条背景颜色 */
+                        border: none;  /* 取消边框 */
+                        border-radius: 10px;  /* 边框圆角 */
+                    }
+                    QProgressBar::chunk {
+                        background-color: #0078d7;  /* 进度条填充颜色 */
+                        border-radius: 10px;  /* 填充圆角 */
+                    }
+                """)
+                loading_msg.setWindowIcon(QtGui.QIcon(PATH_TO_ICON))  # 使用相对路径设置图标
+                loading_msg.show()  # 显示提示框
+                
+                # 设置提示框位置在屏幕下方
+                screen_geometry = app.primaryScreen().geometry()
+                loading_msg.move(screen_geometry.x() + (screen_geometry.width() - loading_msg.width()) // 2, (screen_geometry.y() + screen_geometry.height()) // 8)  # 调整位置
+                
+                QApplication.processEvents()
+            
+            if not visualizer:
+                visualizer = PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
+                loading_msg.setValue(50)
+                visualizer.update_pattern(bytes(15), [1] * 120, 0)  # 初始化
+                loading_msg.setValue(100)
+                loading_msg.close()  # 关闭提示框
+                QApplication.processEvents()  # 确保界面更新
+
             action_midi_visualization(visualizer, midi_file_path)
+            visualizer._initialize_data()
         else:
             break
