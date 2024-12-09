@@ -43,7 +43,7 @@ class PatternVisualizer3D:
         self.target_elev = 30
         self.azim_angle = 30
         self.target_azim_speed = 2
-        self.fig = plt.figure(facecolor='black', figsize=(6, 6), layout='tight')
+        self.fig = plt.figure(facecolor='black', figsize=(6, 6))
         self.fig.canvas.manager.window.setWindowTitle("🎼Musical Bubble Column!🎹")
         base_path = os_path.dirname(os_path.abspath(__file__))
         PATH_TO_ICON = os_path.join(base_path, "icon.png")
