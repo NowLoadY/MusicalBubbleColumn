@@ -18,17 +18,21 @@ import sys
 #from scipy.spatial import cKDTree
 from PyQt5 import QtCore
 from numba import njit
+from PyQt5.QtCore import QEvent, QObject
 #import time
 
-
-class PatternVisualizer3D:
+class PatternVisualizer3D(QObject):
     def __init__(self, visualize_piano=False, pos_type="Fibonacci", orientation="up"):
+        super().__init__()  # 初始化 QObject
         self.orientation=orientation
         self.data_height = 300
         self.pos_type = pos_type
         self.total_center = (0, 0, self.data_height//2)
         self.visualize_piano = visualize_piano
         self.working=True
+        self.theme_index = 0
+        self.fig_themes_rgba = [(0.,0.,60/255,1.), (0.,0.,0.,1.), (1.,1.,1.,1.), (232/255,212/255,114/255,1.)]
+        self.data_themes_rgb = [(229/255,248/255,1.), (1.,1.,1.), (0.,0.,0.), (184/255, 34/255, 20/255)]
         self._initialize_plot()
         self.position_list = self._generate_positions(120, self.total_center[0], self.total_center[1], 2, 36, pos_type=self.pos_type)
         self._initialize_data()
@@ -43,14 +47,20 @@ class PatternVisualizer3D:
         self.target_elev = 30
         self.azim_angle = 30
         self.target_azim_speed = 1
-        self.fig = plt.figure(facecolor=(0,0,60/255,1), figsize=(7, 7))
+        self.fig = plt.figure(facecolor=self.fig_themes_rgba[0], figsize=(8, 6))
         self.fig.canvas.manager.window.setWindowTitle("🎼Musical Bubble Column!🎹")
         self.toolbar = self.fig.canvas.manager.toolbar
         self.toolbar.hide()
         new_icon = QtGui.QIcon(PATH_TO_ICON)
-        fig = plt.gcf()
-        fig.canvas.manager.window.setWindowIcon(QtGui.QIcon(new_icon))
+        self.mouse_pressing=False
+        self.mouse_controling_slider = False
+        self.fig.canvas.manager.window.setWindowIcon(QtGui.QIcon(new_icon))
         self.fig.canvas.manager.window.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)  # 设置窗口置顶
+        self.fig.canvas.manager.window.installEventFilter(self)  # 安装事件过滤器
+        self.fig.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)  # 连接鼠标移动事件
+        self.fig.canvas.mpl_connect('button_press_event', self.on_mouse_click)  # 连接鼠标点击事件
+        self.fig.canvas.mpl_connect('button_press_event', self.on_mouse_press)
+        self.fig.canvas.mpl_connect('button_release_event', self.on_mouse_release)
         if self.visualize_piano:
             if self.orientation == "down":
                 gs = GridSpec(2, 1, height_ratios=[1, 30])
@@ -66,13 +76,14 @@ class PatternVisualizer3D:
         self.ax.view_init(elev=self.elev, azim=self.azim_angle)
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
         self._hide_axes()
-        self.ax.set_facecolor((0, 0, 60/255, 1))
+        self.data_color = self.data_themes_rgb[0]
+        self.ax.set_facecolor(self.fig_themes_rgba[0])
         self.ax.set_box_aspect([1, 1, 3])
         self.elev_slider = plt.axes([0.9, 0.1, 0.03, 0.8], facecolor='none')  # 创建滑条位置并设置颜色
-        self.elev_slider = plt.Slider(self.elev_slider, '', 0, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
+        self.elev_slider = plt.Slider(self.elev_slider, '', 0, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'none', 'edgecolor': '0.6', 'size': 10})  # 初始化滑条并设置颜色
         self.elev_slider.on_changed(self.update_elev)  # 绑定滑条变化事件
         self.azim_slider = plt.axes([0.2, 0.01 if self.orientation=="down" else 0.1, 0.6, 0.03], facecolor='none')  # 创建滑条位置并设置颜色
-        self.azim_slider = plt.Slider(self.azim_slider, '', -5, 5, orientation='horizontal', valinit=self.target_azim_speed, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'none', 'edgecolor': '1', 'size': 10})  # 初始化滑条并设置颜色
+        self.azim_slider = plt.Slider(self.azim_slider, '', -5, 5, orientation='horizontal', valinit=self.target_azim_speed, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'none', 'edgecolor': '0.6', 'size': 10})  # 初始化滑条并设置颜色
         self.azim_slider.on_changed(self.update_azim)  # 绑定滑条变化事件
         self.fig.canvas.mpl_connect('close_event', self.handle_close)
         if self.visualize_piano:
@@ -94,6 +105,15 @@ class PatternVisualizer3D:
         self.position_index = {pos: idx for idx, pos in enumerate(self.position_list)}
         #self.position_tree = cKDTree(self.position_list)  # 创建KD树
         self.opacity_dict = self._calculate_opacity()
+        self.defalt_zlim = (0, self.data_height+2)
+        self.defalt_xlim = (-max_size//2, max_size//2)
+        self.defalt_ylim = (-max_size//2, max_size//2)
+        self.target_zlim = self.defalt_zlim
+        self.target_xlim = self.defalt_xlim
+        self.target_ylim = self.defalt_ylim
+        self.zlim = self.defalt_zlim
+        self.xlim = self.defalt_xlim
+        self.ylim = self.defalt_ylim
 
     def _generate_positions(self, num_positions, center_x, center_y, inner_radius, outer_radius, pos_type="Fibonacci"):
         positions = []
@@ -125,7 +145,6 @@ class PatternVisualizer3D:
                         positions.append((x, y))
                 outer_radius += 1
 
-        self._update_axis_limits(positions)
         # 计算偏移量
         min_x = min(pos[0] for pos in positions)
         min_y = min(pos[1] for pos in positions)
@@ -134,7 +153,7 @@ class PatternVisualizer3D:
         positions = [(x + self.offset[0], y + self.offset[1]) for x, y in positions]
         return positions
 
-    def update_pattern(self, new_pattern, volumes, average_volume, radius=5):
+    def update_pattern(self, new_pattern, volumes, average_volume): #, radius=5
         # 检查绘图窗口是否仍然打开
         if not plt.fignum_exists(self.fig.number):
             self._initialize_plot()  # 重新初始化绘图窗口
@@ -149,18 +168,29 @@ class PatternVisualizer3D:
         #         dist, index = self.position_tree.query(adjusted_coord, distance_upper_bound=radius)
         #         if dist != float('inf'):  # 如果找到在半径范围内的点
         #             bit_array[index] = 1
-        else:
-            raise ValueError("new_pattern must be either a bytes object or a list of (x, y) tuples.")
+        # else:
+        #     raise ValueError("new_pattern must be either a bytes object or a list of (x, y) tuples.")
 
         # 重置最后一层的pattern_data 和 pattern_data_thickness，淘汰边缘的旧数据
         self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0
         self.pattern_data_thickness[-1 if self.orientation == "down" else 0, :, :] = 0
         self.azim_angle = (self.azim_angle - self.target_azim_speed) % 360
         self.elev = self.elev + (self.target_elev - self.elev) * 0.1
+
         self._update_data_layer(bit_array, volumes, average_volume)
         
         self.ax.cla()
-        self.ax.set_zlim(0, self.data_height+2)
+        if self.mouse_controling_slider:
+            self.target_xlim = (self.defalt_xlim[0]*1.5, self.defalt_xlim[1]*1.5)
+            self.target_ylim = (self.defalt_ylim[0]*1.5, self.defalt_ylim[1]*1.5)
+        # 平滑过渡到目标限制
+        self.zlim = tuple(np.array(self.zlim) + (np.array(self.target_zlim) - np.array(self.zlim)) * 0.1)
+        self.xlim = tuple(np.array(self.xlim) + (np.array(self.target_xlim) - np.array(self.xlim)) * 0.1)
+        self.ylim = tuple(np.array(self.ylim) + (np.array(self.target_ylim) - np.array(self.ylim)) * 0.1)
+        self.ax.set_xlim(self.xlim)
+        self.ax.set_ylim(self.ylim)
+        self.ax.set_zlim(self.zlim)
+
         self._hide_axes()
         self._draw_pattern()
         if self.visualize_piano:
@@ -244,7 +274,7 @@ class PatternVisualizer3D:
         else:
             all_opacity = step1_all_opacity
 
-        self.ax.scatter(all_x, all_y, all_z, c=[(229/255, 248/255, 1, op) for op in all_opacity], marker='o', s=all_sizes)
+        self.ax.scatter(all_x, all_y, all_z, c=[self.data_color + (op,) for op in all_opacity], marker='o', s=all_sizes)
 
         # 绘制最后一层
         #x, y, z = np.nonzero(np.atleast_3d(self.pattern_data[0 if self.orientation=="down" else self.data_height-1]))
@@ -255,6 +285,58 @@ class PatternVisualizer3D:
         plt.close(self.fig)
         self.working = False
 
+    def eventFilter(self, source, event):
+        if event.type() == QEvent.Leave:  # 检测鼠标离开窗口
+            #print("Mouse has left the window!")
+            self.on_mouse_leave()
+        return super().eventFilter(source, event)
+
+    def on_mouse_leave(self):
+        # 处理鼠标离开窗口时的逻辑
+        self.target_xlim = self.defalt_xlim
+        self.target_ylim = self.defalt_ylim
+        self.target_zlim = self.defalt_zlim
+
+    def on_mouse_move(self, event):
+        # 检查鼠标是否在绘图区域内
+        if event.inaxes:
+            # 检查鼠标是否在 elev_slider 上
+            if self.elev_slider.ax.contains(event)[0] or self.azim_slider.ax.contains(event)[0]:
+                self.target_xlim = (self.defalt_xlim[0]*1.5, self.defalt_xlim[1]*1.5)
+                self.target_ylim = (self.defalt_ylim[0]*1.5, self.defalt_ylim[1]*1.5)
+                if self.mouse_pressing:
+                    self.mouse_controling_slider=True
+            # 检查鼠标是否在主体范围内
+            elif (abs(event.xdata)<0.06) and (abs(event.ydata)<0.08):
+                self.target_xlim = (self.defalt_xlim[0]*0.6, self.defalt_xlim[1]*0.6)
+                self.target_ylim = (self.defalt_ylim[0]*0.6, self.defalt_ylim[1]*0.6)
+                self.target_zlim = (self.defalt_zlim[0] * 0.6, self.defalt_zlim[1] * 0.6)
+            else:
+                self.target_xlim = self.defalt_xlim
+                self.target_ylim = self.defalt_ylim
+                self.target_zlim = self.defalt_zlim
+        else:
+            self.target_xlim = self.defalt_xlim
+            self.target_ylim = self.defalt_ylim
+            self.target_zlim = self.defalt_zlim
+
+    def on_mouse_click(self, event):
+        if event.dblclick:
+            self._change_theme()
+            print(f"Double-click detected at {event.x}, {event.y}")
+        else:
+            print(f"Single click at {event.x}, {event.y}")
+
+    def on_mouse_press(self, event):
+        self.mouse_pressing = True
+
+    def on_mouse_release(self, event):
+        self.mouse_pressing = False
+        if self.mouse_controling_slider:
+            self.target_xlim = self.defalt_xlim
+            self.target_ylim = self.defalt_ylim
+            self.mouse_controling_slider = False
+
     def update_elev(self, val):
         self.target_elev = val
 
@@ -263,12 +345,6 @@ class PatternVisualizer3D:
 
     def update_view_angle(self):
         self.ax.view_init(elev=self.elev, azim=self.azim_angle)
-
-    def _update_axis_limits(self, positions):
-        min_x, max_x = min(positions, key=lambda pos: pos[0])[0], max(positions, key=lambda pos: pos[0])[0]
-        min_y, max_y = min(positions, key=lambda pos: pos[1])[1], max(positions, key=lambda pos: pos[1])[1]
-        self.ax_xlim_min, self.ax_xlim_max = min_x, max_x
-        self.ax_ylim_min, self.ax_ylim_max = min_y, max_y
 
     def _update_piano_keys(self, bit_array, volumes):
         for i, key in enumerate(self.piano_keys):
@@ -293,6 +369,14 @@ class PatternVisualizer3D:
             axis.set_visible(False)
             axis.line.set_visible(False)  # 隐藏坐标轴线
             axis.set_ticks([])  # 隐藏刻度线
+
+    def _change_theme(self):
+        self.theme_index = (self.theme_index + 1) % len(self.fig_themes_rgba)  # 循环到下一个颜色
+        self.fig.set_facecolor(self.fig_themes_rgba[self.theme_index])  # 设置新的 facecolor
+        self.ax.set_facecolor(self.fig_themes_rgba[self.theme_index])
+        # 更新数据点颜色
+        self.data_color = self.data_themes_rgb[self.theme_index]  # 更新数据颜色
+
 
 @njit
 def add_pattern(bit_array, volumes, average_volume, position_list, final_volume, final_volume_index, scaler, thickness_list, pattern_data, pattern_data_thickness, orientation):
@@ -407,7 +491,7 @@ def action_midi_visualization(visualizer, midi_path):
     zero_pattern_interval = 2
     update_count = 0
     process_midi_thread_bool=True
-
+    
     def process_midi():
         nonlocal new_pattern, update_count, volumes, process_midi_thread_bool
         for msg in midi_iterator:
@@ -462,7 +546,7 @@ def choose_midi_file(app):
     # 设置全局样式表
     app.setStyleSheet("""
         QFileDialog {
-            background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #ffffff, stop:1 #e0e0e0);
+            background-color: #ffffff;
             color: #000000;
             border-radius: 15px;
         }
@@ -501,6 +585,15 @@ def choose_midi_file(app):
         midi_file_path = None
     return midi_file_path
 
+class RoundedProgressDialog(QProgressDialog):
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)  # 开启抗锯齿
+        rounded_rect = QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("#f0f0f0")))  # 设置背景颜色
+        painter.setPen(QtCore.Qt.NoPen)  # 无边框线
+        painter.drawRoundedRect(rounded_rect, 15, 15)  # 圆角大小为 15px
+
 
 if __name__ == "__main__":
     pygame.init()
@@ -509,24 +602,21 @@ if __name__ == "__main__":
     visualizer = None
     base_path = os_path.dirname(os_path.abspath(__file__))
     PATH_TO_ICON = os_path.join(base_path, "icon.png")
+
     while True:
         midi_file_path = choose_midi_file(app)  # 传递 app 实例
         
         if midi_file_path:
             # 使用 QProgressDialog 作为加载提示框
             if not visualizer:
-                loading_msg = QProgressDialog("正在预编译糟糕的函数...", None, 0, 0)  # 创建进度对话框
+                loading_msg = RoundedProgressDialog("正在预编译糟糕的函数...", None, 0, 0)  # 使用自定义的带圆角的进度对话框
                 loading_msg.setWindowTitle("Musical Bubble Column!")
                 loading_msg.setCancelButton(None)  # 不显示取消按钮
-                loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)  # 设置窗口置顶
+                loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)  # 设置无边框和置顶
+                loading_msg.setAttribute(QtCore.Qt.WA_TranslucentBackground)  # 允许背景透明
                 loading_msg.setMinimumSize(600, 100)  # 设置最小大小
+
                 loading_msg.setStyleSheet("""
-                    QProgressDialog {
-                        background-color: #f0f0f0;  /* 背景颜色 */
-                        color: #333;  /* 字体颜色 */
-                        font-size: 32px;  /* 字体大小 */
-                        font-family: 'Arial';  /* 字体类型 */
-                    }
                     QProgressBar {
                         text-align: center;  /* 文本居中 */
                         background-color: #e0e0e0;  /* 进度条背景颜色 */
@@ -540,11 +630,12 @@ if __name__ == "__main__":
                 """)
                 loading_msg.setWindowIcon(QtGui.QIcon(PATH_TO_ICON))  # 使用相对路径设置图标
                 loading_msg.show()  # 显示提示框
-                
-                # 设置提示框位置在屏幕下方
+
                 screen_geometry = app.primaryScreen().geometry()
-                loading_msg.move(screen_geometry.x() + (screen_geometry.width() - loading_msg.width()) // 2, (screen_geometry.y() + screen_geometry.height()) // 8)  # 调整位置
-                
+                loading_msg.move(
+                    screen_geometry.x() + (screen_geometry.width() - loading_msg.width()) // 2,
+                    (screen_geometry.y() + screen_geometry.height()) // 8
+                )
                 QApplication.processEvents()
             
             if not visualizer:
