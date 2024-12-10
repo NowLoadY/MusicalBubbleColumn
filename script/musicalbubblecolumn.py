@@ -13,13 +13,17 @@ from matplotlib.gridspec import GridSpec
 from PyQt5 import QtGui
 import os.path as os_path
 import pygame.midi
-from PyQt5.QtWidgets import QApplication, QFileDialog, QProgressDialog
+from PyQt5.QtWidgets import QApplication, QFileDialog, QProgressDialog, QGraphicsDropShadowEffect, QProgressBar
 import sys
 #from scipy.spatial import cKDTree
 from PyQt5 import QtCore
 from numba import njit
 from PyQt5.QtCore import QEvent, QObject
+from PyQt5.QtGui import QColor, QPainter
 #import time
+base_path = os_path.dirname(os_path.abspath(__file__))
+PATH_TO_ICON = os_path.join(base_path, "icon.png")
+
 
 class PatternVisualizer3D(QObject):
     def __init__(self, visualize_piano=False, pos_type="Fibonacci", orientation="up"):
@@ -55,12 +59,18 @@ class PatternVisualizer3D(QObject):
         self.mouse_pressing=False
         self.mouse_controling_slider = False
         self.fig.canvas.manager.window.setWindowIcon(QtGui.QIcon(new_icon))
-        self.fig.canvas.manager.window.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)  # 设置窗口置顶
+        self.fig.canvas.manager.window.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.WindowCloseButtonHint)  # 设置窗口置顶
+        #self.fig.canvas.manager.window.setWindowOpacity(0.9)  # 窗口半透明
+        # self.main_window_shadow = QGraphicsDropShadowEffect()
+        # self.main_window_shadow.setBlurRadius(20)
+        # self.main_window_shadow.setColor(QColor(*[int(x) for x in self.fig_themes_rgba[self.theme_index]]))
+        # self.main_window_shadow.setOffset(0, 0)
+        # self.fig.canvas.manager.window.setGraphicsEffect(self.main_window_shadow)
         self.fig.canvas.manager.window.installEventFilter(self)  # 安装事件过滤器
         self.fig.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)  # 连接鼠标移动事件
         self.fig.canvas.mpl_connect('button_press_event', self.on_mouse_click)  # 连接鼠标点击事件
-        self.fig.canvas.mpl_connect('button_press_event', self.on_mouse_press)
-        self.fig.canvas.mpl_connect('button_release_event', self.on_mouse_release)
+        self.fig.canvas.mpl_connect('button_press_event', self.on_mouse_press)  # 连接鼠标按下事件
+        self.fig.canvas.mpl_connect('button_release_event', self.on_mouse_release)  # 连接鼠标松开事件
         if self.visualize_piano:
             if self.orientation == "down":
                 gs = GridSpec(2, 1, height_ratios=[1, 30])
@@ -76,8 +86,6 @@ class PatternVisualizer3D(QObject):
         self.ax.view_init(elev=self.elev, azim=self.azim_angle)
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
         self._hide_axes()
-        self.data_color = self.data_themes_rgb[0]
-        self.ax.set_facecolor(self.fig_themes_rgba[0])
         self.ax.set_box_aspect([1, 1, 3])
         self.elev_slider = plt.axes([0.9, 0.1, 0.03, 0.8], facecolor='none')  # 创建滑条位置并设置颜色
         self.elev_slider = plt.Slider(self.elev_slider, '', 0, 90, orientation='vertical', valinit=self.elev, color=(1,1,1,0.0), initcolor="none", track_color=(1,1,1,0.1), handle_style={'facecolor': 'none', 'edgecolor': '0.6', 'size': 10})  # 初始化滑条并设置颜色
@@ -91,6 +99,10 @@ class PatternVisualizer3D(QObject):
             self.piano_ax.set_ylim(0, 1)
             self.piano_ax.axis('off')
             self.piano_keys = self.piano_ax.bar(range(120), [1]*120, color='gray', edgecolor='black', width=0.5)
+        # 保持颜色设定
+        self.fig.set_facecolor(self.fig_themes_rgba[self.theme_index])
+        self.ax.set_facecolor(self.fig_themes_rgba[self.theme_index])
+        self.data_color = self.data_themes_rgb[self.theme_index]
 
     def _initialize_data(self):
         # 动态data大小
@@ -144,6 +156,26 @@ class PatternVisualizer3D(QObject):
                     if (x, y) not in positions:
                         positions.append((x, y))
                 outer_radius += 1
+
+        elif pos_type == "arc":
+            arc_fraction = 1 / 4  # Default to 1/3 of the circle
+            angle_range = 2 * np.pi * arc_fraction  # Angle range for the arc
+            
+            while len(positions) < num_positions:
+                positions.clear()
+                for i in range(num_positions):
+                    angle = i * angle_range / num_positions  # Spread the positions across the arc
+                    radius = outer_radius
+                    x = int(center_x + radius * np.cos(angle))
+                    y = int(center_y + radius * np.sin(angle))
+                    if (x, y) not in positions:
+                        positions.append((x, y))
+                    else:
+                        # If we find a duplicate, increase the radius and clear positions to retry
+                        outer_radius += 1
+                        break
+                if len(positions) >= num_positions:
+                    break
 
         # 计算偏移量
         min_x = min(pos[0] for pos in positions)
@@ -585,14 +617,75 @@ def choose_midi_file(app):
         midi_file_path = None
     return midi_file_path
 
+
 class RoundedProgressDialog(QProgressDialog):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setValue(0)  # Set initial value to 0
+        self.setBar(ShadowProgressBar())  # Use ShadowProgressBar for progress bar
+
+        # Add shadow effect to the window
+        self.addShadowEffect()
+
+    def addShadowEffect(self):
+        shadow_effect = QGraphicsDropShadowEffect()
+        shadow_effect.setBlurRadius(8)  # Increase the blur radius for a softer shadow
+        shadow_effect.setColor(QtGui.QColor(0, 0, 0, 90))  # Use a softer, more transparent shadow color
+        shadow_effect.setOffset(3, 4)  # Increase offset to move the shadow further from the window
+        
+        self.setGraphicsEffect(shadow_effect)  # Apply the shadow effect to the dialog window
+
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)  # 开启抗锯齿
-        rounded_rect = QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        painter.setBrush(QtGui.QBrush(QtGui.QColor("#f0f0f0")))  # 设置背景颜色
-        painter.setPen(QtCore.Qt.NoPen)  # 无边框线
-        painter.drawRoundedRect(rounded_rect, 15, 15)  # 圆角大小为 15px
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)  # Enable anti-aliasing
+        
+        # Draw the rounded background
+        rounded_rect = QtCore.QRectF(self.rect()).adjusted(10, 10, -10, -10)  # Adjust for shadow effect
+        painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # Set background color
+        painter.setPen(QtCore.Qt.NoPen)  # No border
+        painter.drawRoundedRect(rounded_rect, 15, 15)  # Draw rounded rectangle with 15px radius
+        
+        # Load the icon
+        icon = QtGui.QPixmap(PATH_TO_ICON)  # Load the icon
+        
+        # Calculate the scaled size for the icon (1/2 of the height of the dialog)
+        icon_size = min(self.height(), self.width()) // 3
+        icon_scaled = icon.scaled(icon_size, icon_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+
+        # Position the icon in the top-left corner
+        icon_rect = QtCore.QRect(self.width()//4, 20, icon_scaled.width(), icon_scaled.height())  # Position at top-left corner
+        
+        # Draw the scaled icon onto the dialog
+        painter.drawPixmap(icon_rect, icon_scaled)
+
+
+class ShadowProgressBar(QProgressBar):
+    def __init__(self):
+        super().__init__()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect()
+
+        # 绘制背景
+        painter.setBrush(QColor(102, 204, 255))  # 背景颜色
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.drawRoundedRect(rect, 10, 10)  # 圆角背景
+
+        # 绘制进度条和阴影（计算出进度条的填充区域）
+        chunk_rect = rect.adjusted(0, 0, int(-rect.width() * (1 - self.value() / self.maximum())), 0)
+        # 先绘制阴影
+        shadow_rect = chunk_rect.adjusted(1, 0, 3, 0)  # 设置阴影位置
+        painter.setBrush(QColor(0, 0, 0, 30))  # 半透明黑色阴影
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.drawRoundedRect(shadow_rect, 10, 10)  # 圆角阴影
+        # 然后绘制进度条
+        painter.setBrush(QColor(0, 120, 215))  # 进度条颜色
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.drawRoundedRect(chunk_rect, 10, 10)  # 圆角进度条
+
+        painter.end()
 
 
 if __name__ == "__main__":
@@ -600,8 +693,6 @@ if __name__ == "__main__":
     pygame.midi.init()
     app = QApplication(sys.argv)  # 在主线程中创建 QApplication 实例
     visualizer = None
-    base_path = os_path.dirname(os_path.abspath(__file__))
-    PATH_TO_ICON = os_path.join(base_path, "icon.png")
 
     while True:
         midi_file_path = choose_midi_file(app)  # 传递 app 实例
@@ -609,25 +700,13 @@ if __name__ == "__main__":
         if midi_file_path:
             # 使用 QProgressDialog 作为加载提示框
             if not visualizer:
-                loading_msg = RoundedProgressDialog("正在预编译糟糕的函数...", None, 0, 0)  # 使用自定义的带圆角的进度对话框
+                loading_msg = RoundedProgressDialog("Musical Bubble Column!\n正在预编译糟糕的函数...", None, 0, 0)  # 使用自定义的带圆角的进度对话框
                 loading_msg.setWindowTitle("Musical Bubble Column!")
                 loading_msg.setCancelButton(None)  # 不显示取消按钮
                 loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)  # 设置无边框和置顶
                 loading_msg.setAttribute(QtCore.Qt.WA_TranslucentBackground)  # 允许背景透明
                 loading_msg.setMinimumSize(600, 100)  # 设置最小大小
 
-                loading_msg.setStyleSheet("""
-                    QProgressBar {
-                        text-align: center;  /* 文本居中 */
-                        background-color: #e0e0e0;  /* 进度条背景颜色 */
-                        border: none;  /* 取消边框 */
-                        border-radius: 10px;  /* 边框圆角 */
-                    }
-                    QProgressBar::chunk {
-                        background-color: #0078d7;  /* 进度条填充颜色 */
-                        border-radius: 10px;  /* 填充圆角 */
-                    }
-                """)
                 loading_msg.setWindowIcon(QtGui.QIcon(PATH_TO_ICON))  # 使用相对路径设置图标
                 loading_msg.show()  # 显示提示框
 
