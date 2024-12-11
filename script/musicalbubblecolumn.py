@@ -13,14 +13,14 @@ from matplotlib.gridspec import GridSpec
 from PyQt5 import QtGui
 import os.path as os_path
 import pygame.midi
-from PyQt5.QtWidgets import QApplication, QFileDialog, QProgressDialog, QGraphicsDropShadowEffect, QProgressBar
+from PyQt5.QtWidgets import QApplication, QFileDialog, QProgressDialog, QGraphicsDropShadowEffect, QProgressBar, QGraphicsBlurEffect
 import sys
 #from scipy.spatial import cKDTree
 from PyQt5 import QtCore
 from numba import njit
 from PyQt5.QtCore import QEvent, QObject
 from PyQt5.QtGui import QColor, QPainter
-#import time
+import time
 base_path = os_path.dirname(os_path.abspath(__file__))
 PATH_TO_ICON = os_path.join(base_path, "icon.png")
 
@@ -192,16 +192,6 @@ class PatternVisualizer3D(QObject):
             self._initialize_data()
         if isinstance(new_pattern, bytes):
             bit_array = np.unpackbits(np.frombuffer(new_pattern, dtype=np.uint8))
-        # elif isinstance(new_pattern, list) and all(isinstance(coord, tuple) and len(coord) == 2 for coord in new_pattern):
-        #     bit_array = np.zeros(120, dtype=np.uint8)
-        #     for coord in new_pattern:
-        #         # 查找最近的坐标
-        #         adjusted_coord = (coord[0] + self.offset[0], coord[1] + self.offset[1])
-        #         dist, index = self.position_tree.query(adjusted_coord, distance_upper_bound=radius)
-        #         if dist != float('inf'):  # 如果找到在半径范围内的点
-        #             bit_array[index] = 1
-        # else:
-        #     raise ValueError("new_pattern must be either a bytes object or a list of (x, y) tuples.")
 
         # 重置最后一层的pattern_data 和 pattern_data_thickness，淘汰边缘的旧数据
         self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0
@@ -409,6 +399,11 @@ class PatternVisualizer3D(QObject):
         # 更新数据点颜色
         self.data_color = self.data_themes_rgb[self.theme_index]  # 更新数据颜色
 
+def init_njit_func(visualizer, new_pattern, volumes, average_volume):
+    if isinstance(new_pattern, bytes):
+        bit_array = np.unpackbits(np.frombuffer(new_pattern, dtype=np.uint8))
+    add_pattern(bit_array, volumes, average_volume, visualizer.position_list, visualizer.final_volume, visualizer.final_volume_index, visualizer.scaler, visualizer.thickness_list, visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.orientation)
+    calculate_bubble(visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.data_height)
 
 @njit
 def add_pattern(bit_array, volumes, average_volume, position_list, final_volume, final_volume_index, scaler, thickness_list, pattern_data, pattern_data_thickness, orientation):
@@ -539,12 +534,14 @@ def action_midi_visualization(visualizer, midi_path):
             
             if not pygame.mixer.music.get_busy() or not process_midi_thread_bool:
                 break
-
+    
+    visualizer._initialize_data()
     midi_thread = threading.Thread(target=process_midi)
     midi_thread.start()
 
     #last_time = time.time()
     #fps = 0
+
     while True:
         visualizer.working = True
         if total_volumes:
@@ -564,7 +561,7 @@ def action_midi_visualization(visualizer, midi_path):
         if not visualizer.working:
             process_midi_thread_bool=False
             break
-        
+
         # 计算FPS
         #current_time = time.time()
         #fps = int(1 / (current_time - last_time))
@@ -621,42 +618,94 @@ def choose_midi_file(app):
 class RoundedProgressDialog(QProgressDialog):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setValue(0)  # Set initial value to 0
-        self.setBar(ShadowProgressBar())  # Use ShadowProgressBar for progress bar
+        self.setValue(0)  # 设置初始进度值为 0
+        self.setBar(ShadowProgressBar())  # 使用自定义的进度条
 
-        # Add shadow effect to the window
-        self.addShadowEffect()
+        # 添加窗口阴影效果
+        self._add_shadow_effect()
 
-    def addShadowEffect(self):
+    def _add_shadow_effect(self):
+        """
+        为整个对话框窗口添加阴影效果。
+        """
         shadow_effect = QGraphicsDropShadowEffect()
-        shadow_effect.setBlurRadius(8)  # Increase the blur radius for a softer shadow
-        shadow_effect.setColor(QtGui.QColor(0, 0, 0, 90))  # Use a softer, more transparent shadow color
-        shadow_effect.setOffset(3, 4)  # Increase offset to move the shadow further from the window
-        
-        self.setGraphicsEffect(shadow_effect)  # Apply the shadow effect to the dialog window
+        shadow_effect.setBlurRadius(10)  # 增加模糊半径以获得柔和阴影
+        shadow_effect.setColor(QtGui.QColor(0, 0, 0, 80))  # 使用透明的黑色阴影
+        shadow_effect.setOffset(5, 5)  # 设置阴影的偏移量
+        self.setGraphicsEffect(shadow_effect)
 
     def paintEvent(self, event):
+        """
+        自定义窗口绘制事件，用于绘制圆角背景和图标。
+        """
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)  # Enable anti-aliasing
-        
-        # Draw the rounded background
-        rounded_rect = QtCore.QRectF(self.rect()).adjusted(10, 10, -10, -10)  # Adjust for shadow effect
-        painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # Set background color
-        painter.setPen(QtCore.Qt.NoPen)  # No border
-        painter.drawRoundedRect(rounded_rect, 15, 15)  # Draw rounded rectangle with 15px radius
-        
-        # Load the icon
-        icon = QtGui.QPixmap(PATH_TO_ICON)  # Load the icon
-        
-        # Calculate the scaled size for the icon (1/2 of the height of the dialog)
-        icon_size = min(self.height(), self.width()) // 3
-        icon_scaled = icon.scaled(icon_size, icon_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)  # 启用抗锯齿
 
-        # Position the icon in the top-left corner
-        icon_rect = QtCore.QRect(self.width()//4, 20, icon_scaled.width(), icon_scaled.height())  # Position at top-left corner
-        
-        # Draw the scaled icon onto the dialog
-        painter.drawPixmap(icon_rect, icon_scaled)
+        # 绘制圆角背景
+        self._draw_rounded_background(painter)
+
+        # 绘制图标带阴影
+        self._draw_icon_with_shadow(painter)
+
+    def _draw_rounded_background(self, painter):
+        """
+        绘制圆角背景。
+        """
+        background_rect = QtCore.QRectF(self.rect()).adjusted(10, 10, -10, -10)  # 考虑阴影边距
+        painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # 设置背景颜色为白色
+        painter.setPen(QtCore.Qt.NoPen)  # 不绘制边框
+        painter.drawRoundedRect(background_rect, 30, 30)  # 绘制圆角矩形
+
+    def _draw_icon_with_shadow(self, painter):
+        """
+        绘制带圆角和模糊阴影效果的图标。
+        """
+        # 加载图标
+        icon_pixmap = QtGui.QPixmap(PATH_TO_ICON)
+
+        # 计算缩放后的图标大小
+        icon_size = min(self.height(), self.width()) // 3
+        scaled_icon = icon_pixmap.scaled(icon_size, icon_size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+
+        icon_x = self.width() // 5  # 图标 x 坐标
+        icon_y = 20  # 图标 y 坐标
+        shadow_offset = 3
+        corner_radius = 3  # 阴影圆角半径
+        shadow_color = QtGui.QColor(0, 0, 0, 60)  # 半透明黑色阴影
+
+        # 创建阴影的圆角矩形路径
+        shadow_path = QtGui.QPainterPath()
+        shadow_path.addRoundedRect(icon_x + shadow_offset, icon_y + shadow_offset,
+                                scaled_icon.width(), scaled_icon.height(),
+                                corner_radius, corner_radius)
+
+        # 启用模糊效果
+        shadow_blur_effect = QGraphicsBlurEffect()
+        shadow_blur_effect.setBlurRadius(10)
+
+        # 绘制模糊阴影
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(shadow_color))
+        painter.drawPath(shadow_path)
+        painter.restore()
+
+        # 绘制图标
+        painter.drawPixmap(icon_x, icon_y, scaled_icon)
+
+    def setSmoothValue(self, value, callback=None):
+        """
+        平滑过渡到目标值，并在结束后执行回调。
+        :param value: 目标进度值
+        :param callback: 动画结束后的回调函数
+        """
+        animation = QtCore.QPropertyAnimation(self, b"value")  # 绑定到进度条的值属性
+        animation.setDuration(1000)  # 动画持续时间（毫秒）
+        animation.setStartValue(self.value())
+        animation.setEndValue(value)
+        animation.finished.connect(lambda: callback() if callback else None)
+        animation.start()
 
 
 class ShadowProgressBar(QProgressBar):
@@ -671,6 +720,7 @@ class ShadowProgressBar(QProgressBar):
         # 绘制背景
         painter.setBrush(QColor(102, 204, 255))  # 背景颜色
         painter.setPen(QtCore.Qt.NoPen)
+        rect = rect.adjusted(10, 0, -10, 0)
         painter.drawRoundedRect(rect, 10, 10)  # 圆角背景
 
         # 绘制进度条和阴影（计算出进度条的填充区域）
@@ -687,45 +737,61 @@ class ShadowProgressBar(QProgressBar):
 
         painter.end()
 
+class LoadingManager():
+    def __init__(self, loading_msg):
+        super().__init__()
+        self.loading_msg = loading_msg
+        self.fully_complete = False
+
+    def set_complete(self):
+        self.fully_complete = True
+        self.loading_msg.close()
+
+    def smooth_transition(self, start_value, end_value, duration=1):
+        step_count = int(duration * 30)  # Smooth steps per second (30fps)
+        step_size = (end_value - start_value) / step_count
+        
+        for i in range(step_count):
+            current_value = max(min(start_value + step_size * (i + 1), 100), 0)
+            self.loading_msg.setValue(int(current_value))
+            time.sleep(duration / step_count)  # Sleep to control transition speed
+        if self.loading_msg.value()<0:
+            self.set_complete()
+
 
 if __name__ == "__main__":
     pygame.init()
     pygame.midi.init()
     app = QApplication(sys.argv)  # 在主线程中创建 QApplication 实例
-    visualizer = None
+    visualizer = PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
+    loading_msg = RoundedProgressDialog("Musical Bubble Column!\n🤔正在预编译...", None, 0, 0)  # 使用自定义的带圆角的进度对话框
+    loading_msg.setWindowTitle("Musical Bubble Column!")
+    loading_msg.setCancelButton(None)  # 不显示取消按钮
+    loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)  # 设置无边框和置顶
+    loading_msg.setAttribute(QtCore.Qt.WA_TranslucentBackground)  # 允许背景透明
+    loading_msg.setMinimumSize(600, 150)  # 设置最小大小
 
+    loading_msg.setWindowIcon(QtGui.QIcon(PATH_TO_ICON))  # 使用相对路径设置图标
+    loading_msg.show()  # 显示提示框
+    
+    screen_geometry = app.primaryScreen().geometry()
+    loading_msg.move(
+        screen_geometry.x() + (screen_geometry.width() - loading_msg.width()) // 2,
+        (screen_geometry.y() + screen_geometry.height()) // 8
+    )
+    QApplication.processEvents()
+    loading_manager = LoadingManager(loading_msg)
+    loading_manager.smooth_transition(0, 50, duration=0.5)
+    init_njit_func(visualizer, bytes(15), [1] * 120, 0)  # 初始化
+    loading_manager.smooth_transition(50, 100, duration=0.5)
+    QApplication.processEvents()  # 确保界面更新
     while True:
         midi_file_path = choose_midi_file(app)  # 传递 app 实例
-        
         if midi_file_path:
-            # 使用 QProgressDialog 作为加载提示框
-            if not visualizer:
-                loading_msg = RoundedProgressDialog("Musical Bubble Column!\n正在预编译糟糕的函数...", None, 0, 0)  # 使用自定义的带圆角的进度对话框
-                loading_msg.setWindowTitle("Musical Bubble Column!")
-                loading_msg.setCancelButton(None)  # 不显示取消按钮
-                loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)  # 设置无边框和置顶
-                loading_msg.setAttribute(QtCore.Qt.WA_TranslucentBackground)  # 允许背景透明
-                loading_msg.setMinimumSize(600, 100)  # 设置最小大小
-
-                loading_msg.setWindowIcon(QtGui.QIcon(PATH_TO_ICON))  # 使用相对路径设置图标
-                loading_msg.show()  # 显示提示框
-
-                screen_geometry = app.primaryScreen().geometry()
-                loading_msg.move(
-                    screen_geometry.x() + (screen_geometry.width() - loading_msg.width()) // 2,
-                    (screen_geometry.y() + screen_geometry.height()) // 8
-                )
+            # Wait for loading to complete
+            while not loading_manager.fully_complete:
                 QApplication.processEvents()
-            
-            if not visualizer:
-                visualizer = PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
-                loading_msg.setValue(50)
-                visualizer.update_pattern(bytes(15), [1] * 120, 0)  # 初始化
-                loading_msg.setValue(100)
-                loading_msg.close()  # 关闭提示框
-                QApplication.processEvents()  # 确保界面更新
-
+            # Once the loading is complete, perform the visualization
             action_midi_visualization(visualizer, midi_file_path)
-            visualizer._initialize_data()
         else:
             break
