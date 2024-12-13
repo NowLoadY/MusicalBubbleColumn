@@ -3,6 +3,7 @@
 </p>
 
 # Musical Bubble Column! 
+[让我们说中文](README_ch.md)
 
 **Musical Bubble Column** is a 3D music visualization project built with Python that displays MIDI music in a visual format. Using **Matplotlib** and **Pygame**, it creates a visual representation of musical notes arranged in a Fibonacci spiral pattern.
 
