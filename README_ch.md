@@ -31,11 +31,7 @@
 
 需要 Python 3.7+ 和以下包：（测试3.11）
 
-```
-bash
-
-
-复制代码
+```bash
 pip install matplotlib mido pygame numpy scipy PyQt5 numba
 ```
 
@@ -47,11 +43,7 @@ pip install matplotlib mido pygame numpy scipy PyQt5 numba
 
 3. 运行主程序：
 
-   ```
-   bash
-   
-   
-   复制代码
+   ```bash
    python musicalbubblecolumn.py
    ```
 
