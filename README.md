@@ -1,68 +1,80 @@
-# Musical Bubble Column
+# Musical Bubble Column 🎵
 
-**Musical Bubble Column** 是一个基于 Python 的 3D 音乐可视化项目，它结合了 **Matplotlib** 和 **Pygame** 库，通过动态的 3D 图形展示 MIDI 音乐的节奏与音符，为用户提供沉浸式的音乐体验。项目独特地实现了 **斐波那契数列状可视化** 和 **实时动态渲染**。
+![Musical Bubble Column Demo][demo-gif]
 
-## 特性
+**Musical Bubble Column** is an innovative 3D music visualization project built with Python that transforms your MIDI music into a mesmerizing visual experience. By combining the power of **Matplotlib** and **Pygame**, it creates an immersive display of musical notes and rhythms arranged in a unique Fibonacci spiral pattern.
 
-- **3D 音乐可视化**：
-  - 通过 Matplotlib 的 3D 图形展示音符的动态变化。
-  - 自定义视角，支持动态调整仰角（Elev）和方位角（Azim）。
-- **虚拟钢琴**：
-  - 实时显示钢琴键的激活状态，清晰呈现演奏的音符。
-- **MIDI 支持**：
-  - 支持加载和播放标准 MIDI 文件。
-  - 自动生成与音符对应的动态 3D 可视化效果。
-- **动态调整**：
-  - 根据音符音量和平均音量自动调整视觉效果的大小和透明度。
-  - 实现动态气泡的上升和合并，模拟真实的浮力效果。
-- **斐波那契数列布局**：
-  - 使用斐波那契数列计算音符位置，创建独特的几何排列。
 
-## 环境依赖
+## ✨ Key Features
 
-项目依赖以下库，请确保安装这些依赖项：
+### 🎹 Interactive Piano Visualization
+- Real-time piano key highlighting
+- Dynamic note activation display
+- Professional-grade MIDI playback
 
+### 🌀 3D Dynamic Visualization
+- Stunning 3D bubble animations
+- Fibonacci-sequence based note arrangement
+- Customizable viewing angles (Elevation & Azimuth)
+- Real-time physics simulation for bubble movement
+
+### 🎼 Advanced MIDI Processing
+- Seamless MIDI file integration
+- Automatic piano sound mapping
+- Volume-sensitive visual effects
+
+## 🚀 Quick Start
+
+### Prerequisites
+Ensure you have Python 3.7+ installed, then run:
 ```bash
 pip install matplotlib mido pygame numpy scipy PyQt5 numba
 ```
 
-## 使用指南
-
-1. **运行主程序**： 运行以下命令启动可视化程序：
-
+### Running the Application
+1. Clone this repository
+2. Navigate to the project directory
+3. Run the main application:
    ```bash
    python musicalbubblecolumn.py
    ```
+4. Select your MIDI file and enjoy the show! 🎉
 
-2. **选择 MIDI 文件**：
+## 🎨 Visual Experience
 
-   - 启动程序后会弹出文件选择框。
-   - 选择一个 MIDI 文件（格式为 `.mid` 或 `.midi`），程序将自动播放并生成对应的 3D 可视化效果。
+### Bubble Physics
+- Dynamic bubble generation based on note velocity
+- Realistic floating and merging animations
+- Volume-sensitive transparency and size adjustments
 
-3. **实时调整视角**：
+### Interactive Controls
+- Real-time view angle adjustment
+- Dynamic perspective control
+- Customizable visualization parameters
 
-   - 程序内提供滑动条，可调整 3D 图形的仰角和旋转角度，获得更佳的视觉体验。
+## 🔧 Technical Architecture
 
-## 可视化原理
+### Core Components
+- **PatternVisualizer3D**: Main visualization engine
+- **MIDI Processor**: Handles MIDI data parsing and event management
+- **Physics Engine**: Manages bubble dynamics and interactions
 
-- **气泡生成**：
-  - 音符的每次激活生成动态气泡，气泡的透明度、大小与音量相关联。
-  - 使用 KD 树优化音符映射和气泡定位。
-- **动态上升与合并**：
-  - 气泡随时间上升，厚度和透明度逐层变化。
-  - 在一定距离内的气泡会自动合并。
-- **钢琴键颜色**：
-  - 实时更新虚拟钢琴键的颜色，反映当前激活的音符。（并不完全和真实钢琴一致）
+### Performance Optimizations
+- Numba-accelerated computations
+- Efficient memory management
 
-## 项目结构
+## 📝 Notes
+- Piano sound mapping is optimized for visualization
+- Performance varies based on system specifications
 
-- **`PatternVisualizer3D`**： 核心 3D 可视化类，负责绘制图形、处理 MIDI 数据、更新气泡状态。
-- **`action_midi_visualization`**： MIDI 文件的主要处理逻辑，解析音符和音量信息并调用可视化更新。
-- **`add_pattern` & `calculate_bubble`**： 使用 Numba 优化的核心函数，处理气泡的生成和动态行为。
+## 🤝 Contributing
+Contributions are welcome! Feel free to:
+- Report bugs
+- Suggest features
+- Submit pull requests
 
-## 注意事项
+## 📜 License
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-- **MIDI 文件修改**： 程序会将所有音色更改为钢琴音色，确保最佳视觉呈现。
-- **性能优化**：
-  - 使用 `Numba` 加速计算。
-  - 通过 `cKDTree` 优化气泡的定位和合并
+---
+[demo-gif]: assets/demo.gif "Musical Bubble Column in Action"
