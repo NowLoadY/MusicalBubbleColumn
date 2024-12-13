@@ -45,6 +45,8 @@ pip install matplotlib mido pygame numpy scipy PyQt5 numba
    ```
 4. Select your MIDI file to start
 
+Alternatively, you can download the precompiled .exe file from the [releases](https://github.com/NowLoadY/MusicalBubbleColumn/releases) section and run it directly without needing to set up the Python environment.
+
 ## Features in Detail
 
 ### Visualization
