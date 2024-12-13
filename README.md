@@ -1,34 +1,33 @@
-# Musical Bubble Column 🎵
+# Musical Bubble Column 
 
 <p align="center">
   <img src="asset/preview.gif" width="50%" />
 </p>
 
-**Musical Bubble Column** is an innovative 3D music visualization project built with Python that transforms your MIDI music into a mesmerizing visual experience. By combining the power of **Matplotlib** and **Pygame**, it creates an immersive display of musical notes and rhythms arranged in a unique Fibonacci spiral pattern.
+**Musical Bubble Column** is a 3D music visualization project built with Python that displays MIDI music in a visual format. Using **Matplotlib** and **Pygame**, it creates a visual representation of musical notes arranged in a Fibonacci spiral pattern.
 
+## Features
 
-## ✨ Key Features
+### Piano Visualization
+- Piano key visualization
+- Note display
+- MIDI playback
 
-### 🎹 Interactive Piano Visualization
-- Real-time piano key highlighting
-- Dynamic note activation display
-- Professional-grade MIDI playback
+### 3D Visualization
+- 3D bubble animations
+- Fibonacci-sequence based layout
+- Adjustable viewing angles (Elevation & Azimuth)
+- Basic physics simulation
 
-### 🌀 3D Dynamic Visualization
-- Stunning 3D bubble animations
-- Fibonacci-sequence based note arrangement
-- Customizable viewing angles (Elevation & Azimuth)
-- Real-time physics simulation for bubble movement
+### MIDI Processing
+- MIDI file support
+- Piano sound mapping
+- Volume-based visual effects
 
-### 🎼 Advanced MIDI Processing
-- Seamless MIDI file integration
-- Automatic piano sound mapping
-- Volume-sensitive visual effects
-
-## 🚀 Quick Start
+## Getting Started
 
 ### Prerequisites
-Ensure you have Python 3.7+ installed, then run:
+Python 3.7+ and the following packages are required:
 ```bash
 pip install matplotlib mido pygame numpy scipy PyQt5 numba
 ```
@@ -40,41 +39,40 @@ pip install matplotlib mido pygame numpy scipy PyQt5 numba
    ```bash
    python musicalbubblecolumn.py
    ```
-4. Select your MIDI file and enjoy the show! 🎉
+4. Select your MIDI file to start
 
-## 🎨 Visual Experience
+## Features in Detail
 
-### Bubble Physics
-- Dynamic bubble generation based on note velocity
-- Realistic floating and merging animations
-- Volume-sensitive transparency and size adjustments
+### Visualization
+- Bubble generation based on notes
+- Floating animations
+- Volume-based visual effects
 
-### Interactive Controls
-- Real-time view angle adjustment
-- Dynamic perspective control
-- Customizable visualization parameters
+### Controls
+- View angle adjustment
+- Perspective control
+- Visualization settings
 
-## 🔧 Technical Architecture
+## Technical Details
 
-### Core Components
-- **PatternVisualizer3D**: Main visualization engine
-- **MIDI Processor**: Handles MIDI data parsing and event management
-- **Physics Engine**: Manages bubble dynamics and interactions
+### Components
+- **PatternVisualizer3D**: Visualization engine
+- **MIDI Processor**: MIDI data handling
+- **Physics Sim**: Bubble movement
 
-### Performance Optimizations
-- Numba-accelerated computations
-- Efficient memory management
+### Optimizations
+- Numba acceleration
+- Memory management
 
-## 📝 Notes
-- Piano sound mapping is optimized for visualization
-- Performance varies based on system specifications
+## Notes
+- Optimized for standard MIDI files
+- Performance depends on system hardware
 
-## 🤝 Contributing
-Contributions are welcome! Feel free to:
-- Report bugs
-- Suggest features
-- Submit pull requests
+## Contributing
+We welcome:
+- Bug reports
+- Feature suggestions
+- Pull requests
 
-## 📜 License
+## License
 This project is licensed under the MIT License - see the LICENSE file for details.
-
