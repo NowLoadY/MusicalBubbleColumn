@@ -109,3 +109,6 @@ pip install matplotlib mido pygame numpy scipy PyQt5 numba
 ## 许可
 
 本项目遵循 GNU 通用公共许可证 v3.0（GPL-3.0）- 详细内容请参阅 LICENSE 文件。
+
+## AI 项目
+时代变了大人，这是大量利用AI辅助编程产出的项目，将继续加大AI编程的力度。
