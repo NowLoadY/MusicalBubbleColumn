@@ -25,7 +25,7 @@
 - 钢琴音符映射
 - 基于音量的视觉效果
 
-## 开始使用
+## 食用说明
 
 ### 前提条件
 
@@ -47,7 +47,7 @@ pip install matplotlib mido pygame numpy scipy PyQt5 numba
    python musicalbubblecolumn.py
    ```
 
-4. 选择您的 MIDI 文件开始播放
+4. 选择 MIDI 文件开始播放
 
 直接从 [发布页面](https://github.com/NowLoadY/MusicalBubbleColumn/releases) 下载预编译的 .exe 文件，直接运行就OK
 
@@ -61,9 +61,23 @@ pip install matplotlib mido pygame numpy scipy PyQt5 numba
 
 ### 控制
 
-- 视角调整
-- 透视控制
-- 可视化设置
+<p align="center">
+<table align="center">
+<tr>
+  <td><img src="asset/pitch.gif" width="100%" /></td>
+  <td><img src="asset/rotate.gif" width="100%" /></td>
+  <td><img src="asset/zoomin.gif" width="100%" /></td>
+</tr>
+<tr align="center">
+  <td>调整俯仰角</td>
+  <td>调整视角方向</td>
+  <td>放大/缩小</td>
+</tr>
+</table>
+</p>
+
+- 视角调整：滑动条
+- 换主题：双击
 
 ## 技术细节
 
@@ -83,11 +97,14 @@ pip install matplotlib mido pygame numpy scipy PyQt5 numba
 - 优化支持标准 MIDI 文件
 - 性能依赖于系统硬件
 
-## 贡献
-什么？真的有人会上传修改吗！？
-- 错误报告
-- 功能建议
-- 提交拉取请求
+## 合作交流
+
+什么？真的有人提出修改吗！？如果你对这个项目感兴趣或者有什么新奇的想法，随时欢迎来DD！
+
+你可以：
+- 开个issue来唠嗑
+- 提PR秀骚操作
+- 直接联系我交流都可以
 
 ## 许可
 
