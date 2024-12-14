@@ -56,9 +56,24 @@ Alternatively, you can download the precompiled .exe file from the [releases](ht
 - Volume-based visual effects
 
 ### Controls
-- View angle adjustment
-- Perspective control
-- Visualization settings
+
+<p align="center">
+<table align="center">
+<tr>
+  <td><img src="asset/pitch.gif" width="100%" /></td>
+  <td><img src="asset/rotate.gif" width="100%" /></td>
+  <td><img src="asset/zoomin.gif" width="100%" /></td>
+</tr>
+<tr align="center">
+  <td>View adj: elev</td>
+  <td>View adj: azim</td>
+  <td>Zoom in/out</td>
+</tr>
+</table>
+</p>
+
+- View angle adjustment: slider
+- Change theme: double click
 
 ## Technical Details
 
@@ -81,6 +96,14 @@ We welcome:
 - Feature suggestions
 - Pull requests
 
+## Collaboration
+
+If you're interested in collaborating on this project or have any ideas for improvement, feel free to reach out! I'm open to discussions and welcome any contributions that could enhance this visualization tool.
+
+You can:
+- Open an issue for discussion
+- Submit a pull request
+- Contact me for any questions or suggestions
+
 ## License
 This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - see the LICENSE file for details.
-
