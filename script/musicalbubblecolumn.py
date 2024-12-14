@@ -8,18 +8,14 @@ from mido import MidiFile
 import pygame
 import threading
 from collections import deque
-from PyQt5 import QtGui
 import os.path as os_path
 import pygame.midi
-from PyQt5.QtWidgets import QApplication, QFileDialog
+from PyQt5.QtWidgets import QApplication
 import sys
 from PyQt5 import QtCore
 from MBC_UI_widgets import *
 import MBC_Core
 import time
-base_path = os_path.dirname(os_path.abspath(__file__))
-PATH_TO_ICON = os_path.join(base_path, "icon.png")
-DEFAULT_MIDI_PATH = os_path.join(base_path, "Blade_Runner_2049_Main_Theme.mid")
 
 
 def action_midi_visualization(visualizer, midi_path):
@@ -72,12 +68,11 @@ def action_midi_visualization(visualizer, midi_path):
             if not pygame.mixer.music.get_busy() or not process_midi_thread_bool:
                 break
     
-    #visualizer._initialize_data()
     midi_thread = threading.Thread(target=process_midi)
     midi_thread.start()
 
-    #last_time = time.time()
-    #fps = 0
+    last_time = time.time()
+    fps = 0
     
     while True:
         visualizer.working = True
@@ -100,133 +95,29 @@ def action_midi_visualization(visualizer, midi_path):
             break
 
         # 计算FPS
-        #current_time = time.time()
-        #fps = int(1 / (current_time - last_time))
-        #print(f"FPS: {fps}")
-        #last_time = current_time
+        current_time = time.time()
+        fps = int(1 / (current_time - last_time))
+        print(f"FPS: {fps}")
+        last_time = current_time
 
     midi_thread.join()
     pygame.mixer.music.stop()
-
-def choose_midi_file(app):
-    # 设置全局样式表
-    app.setStyleSheet("""
-        QFileDialog {
-            background-color: #ffffff;
-            color: #000000;
-            border-radius: 15px;
-        }
-        QPushButton {
-            background-color: #ffffff;
-            color: #000000;
-            border: 1px solid #000000;
-            padding: 5px;
-            border-radius: 10px;
-        }
-        QPushButton:hover {
-            background-color: #f0f0f0;
-        }
-        QLineEdit {
-            background-color: #ffffff;
-            color: #000000;
-            border: 1px solid #000000;
-            border-radius: 10px;
-        }
-        QLabel {
-            color: #000000;
-        }
-    """)
-# 
-    options = QFileDialog.Options()
-    options |= QFileDialog.DontUseNativeDialog  # 使用非原生对话框
-    options |= QFileDialog.HideNameFilterDetails  # 隐藏文件类型过滤器的详细信息
-    dialog = QFileDialog(None, "选择MIDI文件", "", "MIDI files (*.mid *.midi);;All files (*.*)", options=options)
-    dialog.setFileMode(QFileDialog.ExistingFile)  # 只允许选择现有文件
-    dialog.setViewMode(QFileDialog.List)
-    dialog.resize(1200, 1200)  # 设置默认窗口大小
-    dialog.setWindowFlags(dialog.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)  # 设置窗口置顶
-    if dialog.exec_() == QFileDialog.Accepted:
-        midi_file_path = dialog.selectedFiles()[0]
-    else:
-        midi_file_path = None
-    return midi_file_path
-
-
-class FileDialogManager:
-    def __init__(self):
-        self.current_midi_path = DEFAULT_MIDI_PATH
-        self.file_dialog = None
-        self.visualizer = visualizer
-        self.should_switch_music = False
-        self.user_cancelled = False
-    
-    def create_file_dialog(self):
-        self.file_dialog = QFileDialog(None, "选择MIDI文件", "", "MIDI files (*.mid *.midi);;All files (*.*)")
-        self.file_dialog.setFileMode(QFileDialog.ExistingFile)
-        self.file_dialog.setViewMode(QFileDialog.List)
-        self.file_dialog.resize(800, 800)  # 调整对话框大小
-        self.file_dialog.setWindowFlags(self.file_dialog.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
-        
-        # 设置对话框位置在屏幕左侧
-        screen = QApplication.primaryScreen().geometry()
-        dialog_x = screen.x() + 50  # 距离左边界50像素
-        dialog_y = (screen.height() - self.file_dialog.height()) // 2  # 垂直居中
-        self.file_dialog.move(dialog_x, dialog_y)
-        
-        def on_file_selected(result):
-            if result == QFileDialog.Accepted and self.file_dialog.selectedFiles():
-                new_path = self.file_dialog.selectedFiles()[0]
-                if new_path:
-                    self.current_midi_path = new_path
-                    self.should_switch_music = True
-                    self.visualizer.working = False
-                    self.file_dialog.close()  # 选择文件后自动关闭对话框
-            else:
-                self.user_cancelled = True
-                if not self.visualizer.working:  # 只有在可视化已经停止时才结束程序
-                    self.should_switch_music = False
-        
-        self.file_dialog.finished.connect(on_file_selected)
-        self.user_cancelled = False  # 重置取消标志
-        return self.file_dialog
-    
-    def show_dialog(self):
-        if self.file_dialog is None or not self.file_dialog.isVisible():
-            self.create_file_dialog().show()
-    
-    def close_dialog(self):
-        if self.file_dialog and self.file_dialog.isVisible():
-            self.file_dialog.close()
-
 
 if __name__ == "__main__":
     pygame.init()
     pygame.midi.init()
     app = QApplication(sys.argv)  # 在主线程中创建 QApplication 实例
-    visualizer = MBC_Core.PatternVisualizer3D(visualize_piano=True, orientation="up", pos_type="Fibonacci")  # Fibonacci
-    loading_msg = RoundedProgressDialog("Musical Bubble Column!\n正在预编译...", None, 0, 0)  # 使用自定义的带圆角的进度对话框
-    loading_msg.setWindowTitle("Musical Bubble Column!")
-    loading_msg.setCancelButton(None)  # 不显示取消按钮
-    loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)  # 设置无边框和置顶
-    loading_msg.setAttribute(QtCore.Qt.WA_TranslucentBackground)  # 允许背景透明
-    loading_msg.setMinimumSize(600, 150)  # 设置最小大小
-
-    loading_msg.setWindowIcon(QtGui.QIcon(PATH_TO_ICON))  # 使用相对路径设置图标
-    loading_msg.show()  # 显示提示框
-    
-    screen_geometry = app.primaryScreen().geometry()
-    loading_msg.move(
-        screen_geometry.x() + (screen_geometry.width() - loading_msg.width()) // 2,
-        (screen_geometry.y() + screen_geometry.height()) // 8
-    )
-    QApplication.processEvents()
-    loading_manager = LoadingManager(loading_msg)
+    visualizer = MBC_Core.PatternVisualizer3D(orientation="up", pos_type="Fibonacci")  # Fibonacci
+    loading_msg_manager = LoadingMessageManager()
+    loading_msg_manager.initialize(app)
+    loading_msg_manager.show()
+    loading_manager = loading_msg_manager.get_loading_manager()
     loading_manager.smooth_transition(0, 50, duration=0.5)
     MBC_Core.init_njit_func(visualizer, bytes(15), [1] * 120, 0)  # 初始化
     loading_manager.smooth_transition(50, 100, duration=0.5)
     QApplication.processEvents()  # 确保界面更新
     
-    dialog_manager = FileDialogManager()
+    dialog_manager = FileDialogManager(visualizer)
     visualizer.working = True  # 初始化工作状态
     
     # 创建定时器来显示文件对话框
