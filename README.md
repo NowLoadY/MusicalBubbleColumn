@@ -1,5 +1,5 @@
 <div align="center" style="display: flex; align-items: center; justify-content: center;">
-  <img src="asset/icon.png" width="15%" style="margin-right: 50px; margin-bottom: 10px;" /> 
+  <img src="asset/icon.png" width="15%" style="margin-right: 50px; margin-bottom: 10px; border-radius: 20px;" /> 
   <h1>Musical Bubble Column!</h1>
 </div>
 
@@ -106,3 +106,38 @@ This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - s
 
 # AI Project
 This project heavily leverages AI-assisted programming.
+
+# Project Structure
+```mermaid
+graph TD
+    subgraph User Interface
+        A[/File Selection/]
+        B([3D Visualization Window])
+    end
+
+    subgraph Core Processing
+        C{{MIDI Event Processor}}
+        D{{Pattern Visualizer}}
+        E([Physics Engine])
+    end
+
+    subgraph Data Flow
+        F[(Pattern Data)]
+        G([Position Calculator])
+    end
+
+    A -->|MIDI File| C
+    C -->|Note Events| D
+    G -->|Bubble Positions| D
+    F -->|Pattern Buffer| D
+    E -->|Bubble Movement| D
+    D -->|Visualization| B
+
+    style A fill:#ffffff,stroke:#003366,stroke-width:2px
+    style B fill:#ffffff,stroke:#003366,stroke-width:2px
+    style C fill:#003366,stroke:#003366,stroke-width:2px,color:#ffffff
+    style D fill:#003366,stroke:#003366,stroke-width:2px,color:#ffffff
+    style E fill:#ffffff,stroke:#003366,stroke-width:2px
+    style F fill:#ffffff,stroke:#003366,stroke-width:2px
+    style G fill:#ffffff,stroke:#003366,stroke-width:2px
+```
