@@ -1,5 +1,5 @@
 <div align="center" style="display: flex; align-items: center; justify-content: center;">
-  <img src="asset/icon.png" width="15%" style="margin-right: 50px; margin-bottom: 10px; border-radius: 20px;" /> 
+  <img src="asset/rounded_icon.png" width="15%" style="margin-right: 50px; margin-bottom: 10px;" /> 
   <h1>Musical Bubble Column!</h1>
 </div>
 
