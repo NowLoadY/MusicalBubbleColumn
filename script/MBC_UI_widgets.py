@@ -61,7 +61,7 @@ class RoundedProgressDialog(QProgressDialog):
         icon_x = self.width() // 5  # 图标 x 坐标
         icon_y = 20  # 图标 y 坐标
         shadow_offset = 3
-        corner_radius = 3  # 阴影圆角半径
+        corner_radius = int(icon_size*0.2)  # 阴影圆角半径
         shadow_color = QtGui.QColor(0, 0, 0, 60)  # 半透明黑色阴影
 
         # 创建阴影的圆角矩形路径

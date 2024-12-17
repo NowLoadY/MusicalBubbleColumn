@@ -23,6 +23,7 @@ def add_pattern(bit_array, volumes, average_volume, position_list, final_volume,
 
     return variances
 
+
 @njit
 def calculate_bubble(pattern_data, pattern_data_thickness, data_height):
     pattern_data_temp = np.zeros(pattern_data.shape, dtype=np.float32)
@@ -110,3 +111,95 @@ def calculate_bubble(pattern_data, pattern_data_thickness, data_height):
                         pattern_data_thickness_temp[layer, x[idx2], y[idx2]] = 0
 
     return pattern_data_temp, pattern_data_thickness_temp
+
+
+@njit
+def calculate_pattern_data_3d(pattern_data, pattern_data_thickness, offset, 
+                            all_positions_x, all_positions_y,
+                            position_index_keys_x, position_index_keys_y,
+                            position_index_values,
+                            opacity_values,
+                            data_height):
+    # 第一层点集
+    x, y, z = np.nonzero(np.atleast_3d(pattern_data[0]))
+    len_x = len(x)
+
+    opacity = np.concatenate((np.full(len_x, 0.8, dtype=np.float32), 
+                            np.full(len_x, 0.3, dtype=np.float32), 
+                            np.full(len_x, 0.1, dtype=np.float32)))
+    size_list = np.concatenate((np.full(len_x, 100, dtype=np.float32), 
+                              np.full(len_x, 250, dtype=np.float32), 
+                              np.full(len_x, 500, dtype=np.float32)))
+
+    x = np.concatenate((x, x, x))
+    y = np.concatenate((y, y, y))
+    
+    # 获取活动位置的坐标
+    active_positions_x = x
+    active_positions_y = y
+    
+    # 初始化数组
+    ix_val = np.empty(0, dtype=np.float32)
+    iy_val = np.empty(0, dtype=np.float32)
+    inactive_opacity = np.empty(0, dtype=np.float32)
+    
+    # 检查每个位置
+    for i in range(len(all_positions_x)):
+        pos_x, pos_y = all_positions_x[i], all_positions_y[i]
+        is_active = False
+        
+        # 检查是否为活动位置
+        for j in range(len(active_positions_x)):
+            if pos_x == active_positions_x[j] and pos_y == active_positions_y[j]:
+                is_active = True
+                break
+        
+        if not is_active:
+            # 在position_index中查找位置
+            for k in range(len(position_index_keys_x)):
+                if pos_x == position_index_keys_x[k] and pos_y == position_index_keys_y[k]:
+                    ix_val = np.append(ix_val, np.float32(pos_x))  # 使用np.float32而不是float
+                    iy_val = np.append(iy_val, np.float32(pos_y))  # 使用np.float32而不是float
+                    opacity_idx = position_index_values[k]
+                    inactive_opacity = np.append(inactive_opacity, opacity_values[opacity_idx])
+                    break
+
+    # 确保所有数组都是float32类型
+    step1_all_x = np.concatenate((x.astype(np.float32), ix_val)) - np.float32(offset[0])
+    step1_all_y = np.concatenate((y.astype(np.float32), iy_val)) - np.float32(offset[1])
+    step1_all_opacity = np.concatenate((opacity, inactive_opacity))
+    step1_all_sizes = np.concatenate((size_list, np.full(len(ix_val), 20, dtype=np.float32)))
+    
+    # 绘制滚动的层
+    step2_all_x = np.empty(0, dtype=np.float32)
+    step2_all_y = np.empty(0, dtype=np.float32)
+    step2_all_z = np.empty(0, dtype=np.float32)
+    step2_all_sizes = np.empty(0, dtype=np.float32)
+    
+    # 分步获取非零点的坐标
+    pattern_data_slice = pattern_data[1:data_height]
+    nonzero_indices = np.nonzero(pattern_data_slice)
+    x, y, z = nonzero_indices[1], nonzero_indices[2], nonzero_indices[0] + 1
+    
+    if x.size > 0:
+        step2_all_x = x.astype(np.float32) - np.float32(offset[0])
+        step2_all_y = y.astype(np.float32) - np.float32(offset[1])
+        step2_all_z = z.astype(np.float32)
+        
+        # 使用循环来获取厚度值
+        step2_all_sizes = np.zeros(len(x), dtype=np.float32)
+        for i in range(len(x)):
+            step2_all_sizes[i] = pattern_data_thickness[z[i], x[i], y[i]] * np.float32(5)
+        step2_all_sizes = np.clip(step2_all_sizes, 0, 500)
+    
+    all_x = np.concatenate((step1_all_x, step2_all_x))
+    all_y = np.concatenate((step1_all_y, step2_all_y))
+    all_z = np.concatenate((np.zeros(len(step1_all_x), dtype=np.float32), step2_all_z))
+    all_sizes = np.concatenate((step1_all_sizes, step2_all_sizes))
+    
+    if len(step2_all_x) > 0:
+        all_opacity = np.concatenate((step1_all_opacity, np.ones(len(step2_all_x), dtype=np.float32)))
+    else:
+        all_opacity = step1_all_opacity
+
+    return all_x, all_y, all_z, all_sizes, all_opacity
