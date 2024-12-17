@@ -2,7 +2,7 @@ import os.path as os_path
 base_path = os_path.dirname(os_path.abspath(__file__))
 PATH_TO_ICON = os_path.join(base_path, "rounded_icon.png")
 DEFAULT_MIDI_PATH = os_path.join(base_path, "AImp3tomidi_City_Of_Stars.mid")
-WAV_FILE_PATH = os_path.join(base_path, "AI_City_Of_Stars_(Vocals).wav")
+WAV_FILE_PATH = os_path.join(base_path, "City_Of_Stars_vocal.wav")
 # 主题颜色
 fig_themes_rgba = [
     (0., 0., 60/255, 1.),           # 深蓝

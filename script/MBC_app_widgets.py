@@ -5,6 +5,7 @@ import numpy as np
 from mido import MidiFile
 import pygame
 import os.path as os_path
+import os
 
 
 class MidiVisualizer:
@@ -65,12 +66,32 @@ class MidiVisualizer:
             pygame.mixer.music.load(temp_midi_path)
             pygame.mixer.music.play()
             
-            # Play WAV for default MIDI
+            # Check for vocal audio file (WAV or MP3)
+            base_path = os.path.splitext(midi_path)[0] + '_vocal'
+            wav_path = base_path + '.wav'
+            mp3_path = base_path + '.mp3'
+            
+            # Play audio if it exists (either default or matching vocal file)
             if midi_path == MBC_config.DEFAULT_MIDI_PATH and os_path.exists(MBC_config.WAV_FILE_PATH):
+                vocal_to_play = MBC_config.WAV_FILE_PATH
+                vocal_file_type = "wav"
+            elif os_path.exists(wav_path):
+                vocal_to_play = wav_path
+                vocal_file_type = "wav"
+            elif os_path.exists(mp3_path):
+                vocal_to_play = mp3_path
+                vocal_file_type = "mp3"
+            else:
+                vocal_to_play = None
+            
+            if vocal_to_play:
                 self.wav_channel = pygame.mixer.Channel(1)
-                wav_sound = pygame.mixer.Sound(MBC_config.WAV_FILE_PATH)
-                pygame.time.delay(300)
-                self.wav_channel.play(wav_sound)
+                vocal_sound = pygame.mixer.Sound(vocal_to_play)
+                if vocal_file_type == "wav":
+                    pygame.time.delay(300)
+                if vocal_file_type == "mp3":
+                    pygame.time.delay(100)
+                self.wav_channel.play(vocal_sound)
                 self.default_wav_playing = True
         except Exception as e:
             print(f"Error setting up audio: {e}")
@@ -150,6 +171,9 @@ class MidiVisualizer:
             self.visualizer.update_view_angle()
             if not self.visualizer.working:
                 self.process_midi_thread_bool = False
+                # 如果默认WAV在播放，停止它
+                if self.default_wav_playing:
+                    self.stop_all_audio()
                 break
         
         self.midi_thread.join()
