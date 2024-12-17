@@ -141,3 +141,7 @@ graph TD
     style F fill:#ffffff,stroke:#003366,stroke-width:2px
     style G fill:#ffffff,stroke:#003366,stroke-width:2px
 ```
+
+# similar to this, 12 years ago? Cool!
+chatgpt found me this:
+[![similar to this, 12 years ago? cool](https://img.youtube.com/vi/2s8dPpujrB4/0.jpg)](https://www.youtube.com/watch?v=2s8dPpujrB4)
