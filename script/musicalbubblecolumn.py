@@ -13,22 +13,10 @@ from MBC_UI_widgets import *
 import MBC_app_widgets
 import MBC_Core
 
-# Automatic GPU acceleration
-try:
-    from MBC_gpu_auto import enable_auto_gpu_acceleration
-    GPU_AUTO_AVAILABLE = True
-except ImportError:
-    print("⚠️ GPU auto-acceleration not available")
-    GPU_AUTO_AVAILABLE = False
-
 
 if __name__ == "__main__":
     pygame.init()
     pygame.midi.init()
-
-    # Initialize automatic GPU acceleration
-    if GPU_AUTO_AVAILABLE:
-        enable_auto_gpu_acceleration()
 
     # Print available MIDI devices
     print("\nAvailable MIDI devices:")

@@ -4,8 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PyQt5 import QtGui
 from MBC_Calc import generate_positions, calculate_opacity
-from MBC_njit_func import add_pattern, calculate_bubble
-from MBC_njit_func import calculate_pattern_data_3d
+import MBC_njit_func
 import MBC_config
 
 
@@ -211,8 +210,8 @@ class PatternVisualizer3D(QObject):
 
 
     def _update_data_layer(self, bit_array, volumes, average_volume):
-        variances = add_pattern(bit_array, volumes, average_volume, self.position_list, self.final_volume, self.final_volume_index, self.scaler, self.thickness_list, self.pattern_data, self.pattern_data_thickness, self.orientation)
-        pattern_data_temp, pattern_data_thickness_temp = calculate_bubble(
+        variances = MBC_njit_func.add_pattern(bit_array, volumes, average_volume, self.position_list, self.final_volume, self.final_volume_index, self.scaler, self.thickness_list, self.pattern_data, self.pattern_data_thickness, self.orientation)
+        pattern_data_temp, pattern_data_thickness_temp = MBC_njit_func.calculate_bubble(
             self.pattern_data, 
             self.pattern_data_thickness, 
             self.data_height, 
@@ -233,7 +232,7 @@ class PatternVisualizer3D(QObject):
     def _draw_pattern(self):
         all_positions = self.all_positions_array
         orientation_int=0 if self.orientation == "up" else 1
-        all_x, all_y, all_z, all_sizes, all_opacity, all_types, all_color_blend_factors = calculate_pattern_data_3d(
+        all_x, all_y, all_z, all_sizes, all_opacity, all_types, all_color_blend_factors = MBC_njit_func.calculate_pattern_data_3d(
             self.pattern_data,
             self.pattern_data_thickness,
             self.offset,
@@ -424,12 +423,12 @@ class PatternVisualizer3D(QObject):
 
 def init_njit_func(visualizer):
     bit_array = np.unpackbits(np.frombuffer(bytes(15), dtype=np.uint8))
-    add_pattern(bit_array, [1] * 120, 0, visualizer.position_list, visualizer.final_volume, visualizer.final_volume_index, visualizer.scaler, visualizer.thickness_list, visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.orientation)
-    calculate_bubble(visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.data_height)
+    MBC_njit_func.add_pattern(bit_array, [1] * 120, 0, visualizer.position_list, visualizer.final_volume, visualizer.final_volume_index, visualizer.scaler, visualizer.thickness_list, visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.orientation)
+    MBC_njit_func.calculate_bubble(visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.data_height)
     bubble_positions = visualizer.bubble_positions
     all_positions = np.array(list(visualizer.all_positions))
     opacity_values = visualizer.opacity_dict
-    calculate_pattern_data_3d(
+    MBC_njit_func.calculate_pattern_data_3d(
         visualizer.pattern_data,
         visualizer.pattern_data_thickness,
         visualizer.offset,
