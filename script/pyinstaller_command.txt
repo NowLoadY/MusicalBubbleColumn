@@ -1,0 +1,1 @@
+pyinstaller --onefile --windowed --add-data "rounded_icon.png;." --icon "rounded_icon.png" --upx-dir "D:\app_install\upx-5.0.1-win64"  musicalbubblecolumn.py

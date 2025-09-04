@@ -22,7 +22,9 @@ class MidiVisualizer:
         self.update_count = 0
         self.zero_pattern_interval = 2
         self.default_wav_playing = False
-        
+        self.key_activation_real = np.zeros(128, dtype=np.uint8)  # 真实钢琴键位
+        self.key_activation_real_bytes = bytes(16)  # 16 bytes for 128 bits (1 bit per key)
+        self.volumes_real = np.zeros(128, dtype=np.uint8)
         pygame.mixer.init(frequency=44100, size=-16, channels=2)
         pygame.mixer.set_num_channels(2)
     
@@ -106,22 +108,35 @@ class MidiVisualizer:
         return min_note, max_note
     
     def map_note_to_range(self, note, min_note, max_note):
-        note_array = np.clip((note - min_note) / (max_note - min_note) * 120, 0, 119)
-        return int(note_array)
+        # Map MIDI note (0-127) to piano key index (0-87 for 88 keys)
+        # A0 (21) to C8 (108) is the standard 88-key piano range
+        piano_key = note - 21  # Shift to 0-87 range
+        # Ensure the note is within the piano's range
+        piano_key = max(0, min(87, piano_key))
+        return piano_key
     
     def process_midi(self, midi_iterator, min_note, max_note):
         for msg in midi_iterator:
-            if msg.type in ['note_on']:
-                mapped_note = self.map_note_to_range(msg.note, min_note, max_note)
+            if msg.type == 'note_on':
+                note = msg.note  # 真实MIDI键位
+
+                # 1. 计算new_pattern（120键映射，用于模式）
+                mapped_note = self.map_note_to_range(note, min_note, max_note)
                 if 0 <= mapped_note < 120:
                     self.key_activation[mapped_note] = 1 if (msg.type == 'note_on' and msg.velocity > 0) else 0
                     self.volumes[mapped_note] = msg.velocity if msg.type == 'note_on' else 0
                     self.total_volumes.append(msg.velocity)
 
                 self.new_pattern = np.packbits(self.key_activation).tobytes()
-                self.key_activation_bytes = np.packbits(self.key_activation).tobytes()
+
+                # 2. 记录真实键位激活（21~108，用于钢琴可视化）
+                if 21 <= note <= 108:
+                    self.key_activation_real[note] = 1 if msg.velocity > 0 else 0
+                    self.volumes_real[note] = msg.velocity  # 用真实键位存音量
+
+                self.key_activation_real_bytes = np.packbits(self.key_activation_real).tobytes()
                 self.update_count = 0
-            
+
             if not pygame.mixer.music.get_busy() or not self.process_midi_thread_bool:
                 break
     
@@ -154,13 +169,14 @@ class MidiVisualizer:
             if self.update_count % self.zero_pattern_interval == 0:
                 self.new_pattern = bytes(15)
                 one_volumes = [1] * 120
-                self.visualizer.update_pattern(self.new_pattern, one_volumes, average_volume, None)
+                self.visualizer.update_pattern(self.new_pattern, one_volumes, average_volume, None, None)
             else:
                 self.visualizer.update_pattern(
-                    self.new_pattern, 
-                    self.volumes, 
-                    average_volume, 
-                    self.key_activation_bytes
+                    new_pattern=self.new_pattern,
+                    volumes=self.volumes,         # 长度固定 120
+                    average_volume=average_volume,
+                    key_activation_bytes=self.key_activation_real_bytes,
+                    volumes_real=self.volumes_real,
                 )
             self.update_count += 1
             

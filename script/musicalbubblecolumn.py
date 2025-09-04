@@ -13,10 +13,22 @@ from MBC_UI_widgets import *
 import MBC_app_widgets
 import MBC_Core
 
+# Automatic GPU acceleration
+try:
+    from MBC_gpu_auto import enable_auto_gpu_acceleration
+    GPU_AUTO_AVAILABLE = True
+except ImportError:
+    print("⚠️ GPU auto-acceleration not available")
+    GPU_AUTO_AVAILABLE = False
+
 
 if __name__ == "__main__":
     pygame.init()
     pygame.midi.init()
+
+    # Initialize automatic GPU acceleration
+    if GPU_AUTO_AVAILABLE:
+        enable_auto_gpu_acceleration()
 
     # Print available MIDI devices
     print("\nAvailable MIDI devices:")
@@ -28,7 +40,7 @@ if __name__ == "__main__":
     print()  # Empty line for better readability
 
     app = QApplication(sys.argv)  # 在主线程中创建 QApplication 实例
-    visualizer = MBC_Core.PatternVisualizer3D(orientation="up", pos_type="Fibonacci")
+    visualizer = MBC_Core.PatternVisualizer3D(orientation="up", pos_type="Fibonacci", visualize_piano=True)# Fibonacci circle arc
     loading_msg_manager = LoadingMessageManager()
     loading_msg_manager.initialize(app)
     loading_msg_manager.show()
@@ -48,7 +60,7 @@ if __name__ == "__main__":
     dialog_timer.start(100)  # 100ms后显示对话框
     
     # 在主线程中运行可视化
-    while True:
+    while True:  
         if dialog_manager.should_switch_music:
             dialog_manager.should_switch_music = False
             visualizer.working = True
