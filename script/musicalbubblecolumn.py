@@ -6,6 +6,11 @@ matplotlib.use('Qt5Agg')
 import pygame
 import os.path as os_path
 import pygame.midi
+import platform
+import os
+# 只在 Linux 系统下检测 Wayland 并切换到 X11
+if platform.system() == "Linux" and os.environ.get("WAYLAND_DISPLAY"):
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
 from PyQt5.QtWidgets import QApplication
 import sys
 from PyQt5 import QtCore
