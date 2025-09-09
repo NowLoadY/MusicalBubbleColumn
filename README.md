@@ -37,7 +37,12 @@
 ## Prerequisites
 Python 3.7+ and the following packages are required:
 ```bash
-pip install matplotlib mido pygame numpy scipy PyQt5 numba
+pip install matplotlib mido pygame numpy PyQt5 numba
+```
+
+For Linux, you need to install fluidsynth:
+```bash
+sudo apt-get install fluidsynth
 ```
 
 ## Running the Application
