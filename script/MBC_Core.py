@@ -248,24 +248,16 @@ class PatternVisualizer3D(QObject):
             self.MAX_SNOW_TTL
         )
         
-        # 根据粒子类型和混合因子设置颜色
-        orange_color = np.array([1.0, 0.6, 0.0])
-        black_color = np.array([0.0, 0.0, 0.0]) # 灯罩颜色
+        # 使用njit优化的颜色计算函数
         base_color = np.array(self.data_color)
-        colors = np.empty((len(all_x), 4), dtype=np.float32)
-
-        for i in range(len(all_x)):
-            particle_type = all_types[i]
-
-            if particle_type == 2: # 灯罩
-                final_color_rgb = black_color
-            elif particle_type == 1: # 灯光
-                final_color_rgb = orange_color
-            else: # 普通粒子 & 雪花 (type 0)
-                blend_factor = all_color_blend_factors[i]
-                final_color_rgb = (1 - blend_factor) * base_color + blend_factor * orange_color
-
-            colors[i] = (final_color_rgb[0], final_color_rgb[1], final_color_rgb[2], all_opacity[i])
+        colors = MBC_njit_func.calculate_particle_colors_njit(
+            all_types,
+            all_color_blend_factors,
+            all_opacity,
+            base_color[0],  # R
+            base_color[1],  # G 
+            base_color[2]   # B
+        )
 
         # 设置绘图参数
         scatter_kwargs = {

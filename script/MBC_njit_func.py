@@ -518,3 +518,53 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
                                               blend_factors_lampshade))
 
     return all_x, all_y, all_z, all_sz, all_op, all_types, all_color_blend_factors
+
+
+@njit(cache=True, nogil=True, fastmath=True)
+def calculate_particle_colors_njit(all_types, all_color_blend_factors, all_opacity, base_color_r, base_color_g, base_color_b):
+    """
+    njit优化的粒子颜色计算函数
+    
+    参数:
+    - all_types: 粒子类型数组 (0=普通粒子&雪花, 1=灯光, 2=灯罩)
+    - all_color_blend_factors: 颜色混合因子数组
+    - all_opacity: 透明度数组
+    - base_color_r, base_color_g, base_color_b: 基础颜色的RGB分量
+    
+    返回:
+    - colors: (N, 4) 颜色数组 [R, G, B, A]
+    """
+    n_particles = len(all_types)
+    colors = np.empty((n_particles, 4), dtype=np.float32)
+    
+    # 预定义颜色
+    orange_r, orange_g, orange_b = np.float32(1.0), np.float32(0.6), np.float32(0.0)
+    black_r, black_g, black_b = np.float32(0.0), np.float32(0.0), np.float32(0.0)
+    
+    # 向量化颜色计算
+    for i in prange(n_particles):
+        particle_type = all_types[i]
+        opacity = all_opacity[i]
+        
+        if particle_type == 2:  # 灯罩
+            final_r = black_r
+            final_g = black_g
+            final_b = black_b
+        elif particle_type == 1:  # 灯光
+            final_r = orange_r
+            final_g = orange_g
+            final_b = orange_b
+        else:  # 普通粒子 & 雪花 (type 0)
+            blend_factor = all_color_blend_factors[i]
+            inv_blend = np.float32(1.0) - blend_factor
+            
+            final_r = inv_blend * base_color_r + blend_factor * orange_r
+            final_g = inv_blend * base_color_g + blend_factor * orange_g
+            final_b = inv_blend * base_color_b + blend_factor * orange_b
+        
+        colors[i, 0] = final_r
+        colors[i, 1] = final_g
+        colors[i, 2] = final_b
+        colors[i, 3] = opacity
+    
+    return colors
