@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Musical Bubble Column - Three.js Web Renderer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #0a0a2e, #16213e, #0f3460);
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+        }
+        
+        canvas {
+            display: block;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 100;
+        }
+        
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        #controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: auto;
+        }
+        
+        .control-group {
+            margin-bottom: 10px;
+        }
+        
+        .control-group label {
+            display: block;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        
+        .control-group input {
+            width: 100px;
+            padding: 5px;
+            border-radius: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+        
+        #status-bar {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            height: 60px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            color: white;
+            font-size: 12px;
+        }
+        
+        .status-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .status-value {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        
+        .connection-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .connected { background-color: #4CAF50; }
+        .disconnected { background-color: #f44336; }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div>🎵 Musical Bubble Column</div>
+        <div style="font-size: 14px; margin-top: 10px;">Connecting to WebSocket...</div>
+    </div>
+    
+    <div id="ui" style="display: none;">
+        <div id="info">
+            <div><strong>🎵 Musical Bubble Column</strong></div>
+            <div style="margin-top: 10px;">
+                <div>WebGL Renderer: <span id="webgl-version">Loading...</span></div>
+                <div>Quality: <span id="quality">High</span></div>
+                <div>Max Particles: <span id="max-particles">50000</span></div>
+            </div>
+        </div>
+        
+        <div id="controls">
+            <div class="control-group">
+                <label>Camera Distance</label>
+                <input type="range" id="camera-distance" min="30" max="150" value="60">
+            </div>
+            <div class="control-group">
+                <label>Particle Size</label>
+                <input type="range" id="particle-scale" min="0.5" max="3.0" step="0.1" value="1.0">
+            </div>
+            <div class="control-group">
+                <label>Animation Speed</label>
+                <input type="range" id="anim-speed" min="0.1" max="2.0" step="0.1" value="1.0">
+            </div>
+        </div>
+        
+        <div id="status-bar">
+            <div class="status-item">
+                <div>Connection</div>
+                <div class="status-value">
+                    <span id="connection-status">Connecting</span>
+                    <span class="connection-dot disconnected" id="connection-dot"></span>
+                </div>
+            </div>
+            <div class="status-item">
+                <div>FPS</div>
+                <div class="status-value" id="fps-counter">0</div>
+            </div>
+            <div class="status-item">
+                <div>Particles</div>
+                <div class="status-value" id="particle-count">0</div>
+            </div>
+            <div class="status-item">
+                <div>Frame</div>
+                <div class="status-value" id="frame-counter">0</div>
+            </div>
+            <div class="status-item">
+                <div>Latency</div>
+                <div class="status-value" id="latency">0ms</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // 全局变量
+        let scene, camera, renderer, particles = [];
+        let ws;
+        let stats = {
+            fps: 0,
+            frameCount: 0,
+            lastTime: 0,
+            particleCount: 0,
+            latency: 0
+        };
+        
+        // 控制参数
+        let controls = {
+            cameraDistance: 60,  // 减少默认距离，让内容更大
+            particleScale: 1.0,
+            animationSpeed: 1.0
+        };
+
+        // 初始化Three.js
+        function init() {
+            // 创建场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0, 0, 60/255);
+            
+            // 创建相机
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, controls.cameraDistance);
+            
+            // 创建渲染器
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                alpha: true,
+                powerPreference: "high-performance"
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+            
+            // 柔和光照系统
+            const ambientLight = new THREE.AmbientLight(0x404080, 0.4); // 增加环境光
+            scene.add(ambientLight);
+            
+            // 主光源 - 降低强度
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(10, 10, 5);
+            scene.add(directionalLight);
+            
+            // 补充光源 - 降低强度
+            const pointLight1 = new THREE.PointLight(0x88ccff, 0.3, 100);
+            pointLight1.position.set(-20, 10, 20);
+            scene.add(pointLight1);
+            
+            const pointLight2 = new THREE.PointLight(0xffcc88, 0.2, 100);
+            pointLight2.position.set(20, -10, 20);
+            scene.add(pointLight2);
+            
+            // 显示WebGL信息
+            updateWebGLInfo();
+            
+            // 连接WebSocket
+            connectWebSocket();
+            
+            // 设置控制器
+            setupControls();
+            
+            // 开始渲染循环
+            animate();
+        }
+        
+        // 显示WebGL信息
+        function updateWebGLInfo() {
+            const gl = renderer.getContext();
+            const version = gl.getParameter(gl.VERSION);
+            document.getElementById('webgl-version').textContent = version;
+        }
+        
+        // WebSocket连接
+        function connectWebSocket() {
+            const wsUrl = 'ws://localhost:8765';
+            console.log('Connecting to:', wsUrl);
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                console.log('WebSocket连接成功');
+                updateConnectionStatus('Connected', true);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('ui').style.display = 'block';
+            };
+            
+            ws.onmessage = function(event) {
+                const startTime = performance.now();
+                const data = JSON.parse(event.data);
+                handleMessage(data);
+                stats.latency = Math.round(performance.now() - startTime);
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket连接断开');
+                updateConnectionStatus('Disconnected', false);
+                setTimeout(connectWebSocket, 2000); // 2秒后重连
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+                updateConnectionStatus('Error', false);
+            };
+        }
+        
+        // 更新连接状态
+        function updateConnectionStatus(status, connected) {
+            document.getElementById('connection-status').textContent = status;
+            const dot = document.getElementById('connection-dot');
+            dot.className = `connection-dot ${connected ? 'connected' : 'disconnected'}`;
+        }
+        
+        // 处理服务器消息
+        function handleMessage(data) {
+            switch(data.type) {
+                case 'render_frame':
+                    updateParticles(data.data.particles);
+                    updateCamera(data.data.camera);
+                    document.getElementById('frame-counter').textContent = data.frame_id || 0;
+                    break;
+                    
+                case 'settings_update':
+                case 'settings':
+                    updateSettings(data.data);
+                    break;
+                    
+                case 'clear_scene':
+                    clearScene();
+                    break;
+            }
+        }
+        
+        // 粒子池管理
+        let particlePool = [];
+        let maxPoolSize = 1000;
+        
+        // 获取或创建粒子
+        function getParticleFromPool() {
+            if (particlePool.length > 0) {
+                return particlePool.pop();
+            }
+            return null;
+        }
+        
+        // 回收粒子到池
+        function returnParticleToPool(particle) {
+            if (particlePool.length < maxPoolSize) {
+                scene.remove(particle.mesh);
+                particlePool.push(particle);
+            } else {
+                // 池满了，直接释放资源
+                scene.remove(particle.mesh);
+                particle.geometry.dispose();
+                particle.material.dispose();
+            }
+        }
+        
+        // 创建高质量粒子
+        function createBeautifulParticle(p, index) {
+            const size = Math.max(p.size * 0.008 * controls.particleScale, 0.05); // 稍微小一点
+            
+            // 使用更高质量的几何体
+            const geometry = new THREE.SphereGeometry(size, 12, 8); // 增加细分
+            
+            let material;
+            if (p.type === 'light') {
+                // 灯光粒子 - 发光效果
+                material = new THREE.MeshBasicMaterial({
+                    color: new THREE.Color(p.color[0], p.color[1], p.color[2]),
+                    opacity: Math.min(p.color[3] * 1.2, 1.0),
+                    transparent: true,
+                    emissive: new THREE.Color(p.color[0] * 0.6, p.color[1] * 0.4, p.color[2] * 0.2)
+                });
+            } else if (p.type === 'lampshade') {
+                // 灯罩 - 暗色不透明
+                material = new THREE.MeshLambertMaterial({
+                    color: new THREE.Color(0.1, 0.1, 0.1),
+                    opacity: 0.9,
+                    transparent: true
+                });
+            } else {
+                // 普通气泡 - 柔和半透明效果
+                material = new THREE.MeshPhongMaterial({
+                    color: new THREE.Color(p.color[0], p.color[1], p.color[2]),
+                    opacity: p.color[3] * 0.7,
+                    transparent: true,
+                    shininess: 20,  // 降低光泽度（原来100）
+                    specular: new THREE.Color(0.2, 0.2, 0.3),  // 减弱镜面反射（原来0.8, 0.8, 1.0）
+                    emissive: new THREE.Color(p.color[0] * 0.05, p.color[1] * 0.05, p.color[2] * 0.1)  // 减弱发光
+                });
+            }
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            // 修正坐标系：让气泡柱垂直显示 (原来的Z轴映射到Y轴)，并向下移动
+            mesh.position.set(p.position[0] * 0.08, p.position[2] * 0.08 - 15, -p.position[1] * 0.08);
+            
+            // 稳定的动画数据（减少闪烁）
+            mesh.userData = {
+                originalPos: {
+                    x: p.position[0] * 0.08,
+                    y: p.position[2] * 0.08 - 15,  // Z -> Y (垂直) 并向下移动
+                    z: -p.position[1] * 0.08  // Y -> -Z (深度)
+                },
+                particleId: p.id || index,
+                time: (p.id || index) * 0.1, // 基于ID的稳定时间偏移
+                amplitude: size * 0.5,
+                type: p.type
+            };
+            
+            return {
+                mesh: mesh,
+                geometry: geometry,
+                material: material,
+                data: p
+            };
+        }
+        
+        // 更新粒子（优化版本，减少闪烁）
+        function updateParticles(particleData) {
+            // 回收所有旧粒子
+            particles.forEach(p => returnParticleToPool(p));
+            particles = [];
+            
+            // 创建新粒子
+            particleData.forEach((p, index) => {
+                try {
+                    const particle = createBeautifulParticle(p, index);
+                    scene.add(particle.mesh);
+                    particles.push(particle);
+                } catch (error) {
+                    console.warn('创建粒子失败:', error);
+                }
+            });
+            
+            stats.particleCount = particles.length;
+            document.getElementById('particle-count').textContent = stats.particleCount;
+        }
+        
+        // 更新相机
+        function updateCamera(cameraData) {
+            if (!cameraData) return;
+            
+            // 简化的相机控制
+            camera.position.setLength(controls.cameraDistance);
+            camera.lookAt(0, 0, 0);
+        }
+        
+        // 更新设置
+        function updateSettings(settings) {
+            if (settings.background_color) {
+                scene.background = new THREE.Color(
+                    settings.background_color[0],
+                    settings.background_color[1], 
+                    settings.background_color[2]
+                );
+            }
+            
+            if (settings.max_particles) {
+                document.getElementById('max-particles').textContent = settings.max_particles;
+            }
+            
+            if (settings.particle_quality) {
+                document.getElementById('quality').textContent = settings.particle_quality;
+            }
+        }
+        
+        // 清空场景
+        function clearScene() {
+            particles.forEach(p => {
+                scene.remove(p.mesh);
+                p.geometry.dispose();
+                p.material.dispose();
+            });
+            particles = [];
+            stats.particleCount = 0;
+            document.getElementById('particle-count').textContent = 0;
+        }
+        
+        // 设置控制器
+        function setupControls() {
+            document.getElementById('camera-distance').addEventListener('input', (e) => {
+                controls.cameraDistance = parseFloat(e.target.value);
+            });
+            
+            document.getElementById('particle-scale').addEventListener('input', (e) => {
+                controls.particleScale = parseFloat(e.target.value);
+            });
+            
+            document.getElementById('anim-speed').addEventListener('input', (e) => {
+                controls.animationSpeed = parseFloat(e.target.value);
+            });
+        }
+        
+        // 渲染循环
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // FPS计算
+            const currentTime = performance.now();
+            stats.frameCount++;
+            
+            if (currentTime - stats.lastTime >= 1000) {
+                stats.fps = Math.round(stats.frameCount * 1000 / (currentTime - stats.lastTime));
+                document.getElementById('fps-counter').textContent = stats.fps;
+                document.getElementById('latency').textContent = stats.latency + 'ms';
+                stats.frameCount = 0;
+                stats.lastTime = currentTime;
+            }
+            
+            // 更稳定的粒子动画（减少闪烁）
+            particles.forEach(p => {
+                if (p.mesh.userData && p.mesh.userData.type === 'bubble') {
+                    p.mesh.userData.time += 0.005 * controls.animationSpeed; // 更慢的动画
+                    const offset = Math.sin(p.mesh.userData.time) * p.mesh.userData.amplitude * 0.3;
+                    p.mesh.position.y = p.mesh.userData.originalPos.y + offset; // 垂直浮动
+                    
+                    // 轻微的左右摆动
+                    p.mesh.position.x = p.mesh.userData.originalPos.x + Math.sin(p.mesh.userData.time * 0.7) * 0.1;
+                }
+            });
+            
+            // 相机水平环绕垂直的气泡柱 - 绕Y轴旋转
+            const angle = currentTime * 0.0005; // 旋转速度
+            camera.position.x = Math.cos(angle) * controls.cameraDistance;
+            camera.position.z = Math.sin(angle) * controls.cameraDistance; 
+            camera.position.y = 5; // 稍微高一点观察气泡柱
+            camera.lookAt(0, -10, 0); // 观察点向下，对准气泡柱中心
+            
+            renderer.render(scene, camera);
+        }
+        
+        // 窗口大小调整
+        window.addEventListener('resize', function() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // 错误处理
+        window.addEventListener('error', function(e) {
+            console.error('页面错误:', e.error);
+        });
+        
+        // 启动应用
+        console.log('🎵 Musical Bubble Column - Three.js Renderer');
+        console.log('Initializing WebGL renderer...');
+        init();
+    </script>
+</body>
+</html>

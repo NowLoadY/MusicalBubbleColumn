@@ -6,33 +6,97 @@ from PyQt5 import QtGui
 from MBC_Calc import generate_positions, calculate_opacity
 import MBC_njit_func
 import MBC_config
+from MBC_config import get_config
+from MBC_BubbleGenerator import BubbleGenerator
+from MBC_PhysicsHandler import PhysicsHandler
+from MBC_PhysicsInterface import NjitPhysicsEngine
+from MBC_RenderInterface import MatplotlibRenderer, RenderSettings, CameraState, convert_njit_to_particles
 
 
 class PatternVisualizer3D(QObject):
-    def __init__(self, pos_type="Fibonacci", visualize_piano=True, orientation="up"):
+    def __init__(self, pos_type=None, visualize_piano=None, orientation=None):
         super().__init__()  # 初始化 QObject
-        self.orientation=orientation
-        self.visualize_piano = visualize_piano
-        self.data_height = MBC_config.data_height_3d
-        self.pos_type = pos_type
+        self.config = get_config()
+        
+        # Use config defaults if not specified
+        self.orientation = orientation or self.config.visualization.default_orientation
+        self.visualize_piano = visualize_piano if visualize_piano is not None else self.config.visualization.visualize_piano
+        self.pos_type = pos_type or self.config.visualization.default_pos_type
+        
+        self.data_height = self.config.visualization.data_height_3d
         self.total_center = (0, 0, self.data_height//2)
-        self.working=True
-        self.theme_index = 0
-        self.fig_themes_rgba = MBC_config.fig_themes_rgba
-        self.data_themes_rgb = MBC_config.data_themes_rgb
-        self.window_opacity = 1.0  # 初始不透明度为100%
+        self.working = True
+        self.theme_index = self.config.theme.default_theme_index
+        self.fig_themes_rgba = self.config.theme.fig_themes_rgba
+        self.data_themes_rgb = self.config.theme.data_themes_rgb
+        self.window_opacity = self.config.visualization.window_opacity
+        
         self._initialize_plot()
-        positions_and_offset = generate_positions(120, self.total_center[0], self.total_center[1], 2, 36, pos_type=self.pos_type)
+        positions_and_offset = generate_positions(
+            self.config.visualization.num_positions,
+            self.total_center[0], 
+            self.total_center[1], 
+            self.config.visualization.inner_radius, 
+            self.config.visualization.outer_radius, 
+            pos_type=self.pos_type
+        )
         self.position_list, self.offset = positions_and_offset
         self._initialize_data()
-        self.scaler = 1
-        self.final_volume = np.zeros(30)
-        self.final_volume_index = 0  # 用于跟踪数组的当前索引
+        
+        # 初始化模块化组件
+        self.bubble_generator = BubbleGenerator(self.position_list, self.orientation)
+        
+        # 计算数据范围用于物理处理器
+        max_x = max(abs(pos[0]) for pos in self.position_list)
+        max_y = max(abs(pos[1]) for pos in self.position_list)
+        max_size = max(max_x, max_y)
+        
+        # 初始化物理处理器（状态管理）
+        self.physics_handler = PhysicsHandler(
+            data_height=self.data_height,
+            max_x=max_size,
+            max_y=max_size,
+            all_positions=self.all_positions_array,
+            bubble_positions=self.bubble_positions,
+            bubble_indices=self.bubble_indices,
+            opacity_dict=self.opacity_dict,
+            offset=self.offset,
+            orientation=self.orientation
+        )
+        
+        # 初始化物理引擎接口（可替换的引擎实现）
+        self.physics_engine = NjitPhysicsEngine()
+        
+        # 初始化渲染引擎接口（可替换的渲染实现）
+        #self.render_engine = MatplotlibRenderer()
+        from MBC_ThreeJSRenderer import ThreeJSRenderer
+        self.render_engine = ThreeJSRenderer()
+        render_settings = RenderSettings(
+            background_color=self.fig_themes_rgba[self.theme_index],
+            window_opacity=self.window_opacity,
+            antialiasing=True
+        )
+        self.render_engine.initialize(render_settings)
+        # 将matplotlib对象传递给渲染器（仅适用于MatplotlibRenderer）
+        if hasattr(self.render_engine, 'set_matplotlib_objects'):
+            self.render_engine.set_matplotlib_objects(self.fig, self.ax)
+        
+        # 将现有的pattern_data传递给PhysicsHandler以保持兼容性
+        self.physics_handler.set_raw_pattern_data(self.pattern_data, self.pattern_data_thickness)
+        
+        # 保持向后兼容性 - 这些属性可能被其他代码使用
+        self.scaler = 1  # 现在由BubbleGenerator管理
+        self.final_volume = np.zeros(self.config.physics.final_volume_history_size)  # 现在由BubbleGenerator管理
+        self.final_volume_index = 0  # 现在由BubbleGenerator管理
+        self.thickness_list = [0] * 120  # 现在由BubbleGenerator管理，但保持引用
+        
         self.toolbar = self.fig.canvas.manager.toolbar
         self.toolbar.hide()
-        self.MAX_SNOW_STACK_HEIGHT = 5  # 积雪最大堆叠高度
-        self.snow_ttl = np.zeros((self.MAX_SNOW_STACK_HEIGHT, self.pattern_data.shape[1], self.pattern_data.shape[2]), dtype=np.int32)
-        self.MAX_SNOW_TTL = 400       # 积雪最多停留 400 帧
+        
+        # 这些现在由PhysicsHandler管理，但保持引用以兼容现有代码
+        self.MAX_SNOW_STACK_HEIGHT = self.config.physics.max_snow_stack_height
+        self.snow_ttl = self.physics_handler.snow_ttl  # 引用PhysicsHandler的snow_ttl
+        self.MAX_SNOW_TTL = self.config.physics.max_snow_ttl
 
     def _create_slider(self, pos, val_range, init_val, orientation, callback):
         ax = plt.axes(pos, facecolor='none')
@@ -45,12 +109,15 @@ class PatternVisualizer3D(QObject):
     
     def _initialize_plot(self):
         # 界面外观设定
-        self.fig = plt.figure(facecolor=self.fig_themes_rgba[0], figsize=(5, 6))
-        self.fig.canvas.manager.window.setWindowTitle("🎼Musical Bubble Column!🎹")
+        self.fig = plt.figure(
+            facecolor=self.fig_themes_rgba[0], 
+            figsize=self.config.ui.default_figure_size
+        )
+        self.fig.canvas.manager.window.setWindowTitle(self.config.ui.window_title)
         self.fig.canvas.manager.window.setWindowFlags(self.fig.canvas.manager.window.windowFlags() | Qt.WindowStaysOnTopHint)
         self.toolbar = self.fig.canvas.manager.toolbar
         self.toolbar.hide()
-        new_icon = QtGui.QIcon(MBC_config.PATH_TO_ICON)
+        new_icon = QtGui.QIcon(self.config.file_paths.icon_path)
         self.fig.canvas.manager.window.setWindowIcon(new_icon)
         self.fig.canvas.manager.window.setStyleSheet("""
             QMainWindow {
@@ -71,10 +138,10 @@ class PatternVisualizer3D(QObject):
         self.mouse_pressing=False
         self.mouse_controling_slider = False
         # 界面数据属性设定
-        self.elev = 37
-        self.target_elev = 37
-        self.azim_angle = 30
-        self.target_azim_speed = 1
+        self.elev = self.config.visualization.default_elev
+        self.target_elev = self.config.visualization.default_elev
+        self.azim_angle = self.config.visualization.default_azim_angle
+        self.target_azim_speed = self.config.visualization.default_azim_speed
         # 界面图表设定
         if self.visualize_piano:
             # 调整比例为40:1使钢琴视图更紧凑
@@ -90,16 +157,17 @@ class PatternVisualizer3D(QObject):
         self.ax.margins(0)
         self.on_resize()
         # 界面组件设定
-        self.elev_slider = self._create_slider([0.9, 0.1, 0.03, 0.8], (0, 90), self.elev, 'vertical', self.update_elev)
-        self.azim_slider = self._create_slider([0.2, 0.02 if self.visualize_piano else 0, 0.6, 0.03], (-5, 5), self.target_azim_speed, 'horizontal', self.update_azim)
+        self.elev_slider = self._create_slider(self.config.ui.elev_slider_pos, (0, 90), self.elev, 'vertical', self.update_elev)
+        azim_pos = self.config.ui.azim_slider_pos if self.visualize_piano else self.config.ui.azim_slider_pos_no_piano
+        self.azim_slider = self._create_slider(azim_pos, (-5, 5), self.target_azim_speed, 'horizontal', self.update_azim)
         if self.visualize_piano:
-            self.piano_ax.set_xlim(0, 52)  # 白键共52个
-            self.piano_ax.set_ylim(0, 1)
+            self.piano_ax.set_xlim(*self.config.ui.piano_xlim)
+            self.piano_ax.set_ylim(*self.config.ui.piano_ylim)
             self.piano_ax.axis('off')
 
-            white_key_width = 1.0
-            black_key_width = 0.55
-            black_key_height = 0.6
+            white_key_width = self.config.ui.white_key_width
+            black_key_width = self.config.ui.black_key_width
+            black_key_height = self.config.ui.black_key_height
 
             self.white_key_map = {}  # midi_note -> white_key_index
             self.white_keys = []
@@ -124,8 +192,8 @@ class PatternVisualizer3D(QObject):
                     while self.is_black_key(left_white):
                         left_white -= 1
                     if left_white in self.white_key_map:
-                        x = self.white_key_map[left_white] + 1 - 0.275
-                        rect = plt.Rectangle((x, 0.4), black_key_width, black_key_height,
+                        x = self.white_key_map[left_white] + 1 - self.config.ui.black_key_x_offset
+                        rect = plt.Rectangle((x, self.config.ui.black_key_y_offset), black_key_width, black_key_height,
                                             facecolor='black', edgecolor='black')
                         self.piano_ax.add_patch(rect)
                         self.black_keys.append(rect)
@@ -179,7 +247,7 @@ class PatternVisualizer3D(QObject):
         self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0
         self.pattern_data_thickness[-1 if self.orientation == "down" else 0, :, :] = 0
         self.azim_angle = (self.azim_angle - self.target_azim_speed) % 360
-        self.elev = self.elev + (self.target_elev - self.elev) * 0.1
+        self.elev = self.elev + (self.target_elev - self.elev) * self.config.visualization.view_transition_rate
         
         # 2.解析、计算新数据
         if isinstance(new_pattern, bytes):
@@ -194,9 +262,10 @@ class PatternVisualizer3D(QObject):
             self.target_xlim = (self.defalt_xlim[0]*1.5, self.defalt_xlim[1]*1.5)
             self.target_ylim = (self.defalt_ylim[0]*1.5, self.defalt_ylim[1]*1.5)
         # 平滑过渡到目标lim
-        self.zlim = tuple(np.array(self.zlim) + (np.array(self.target_zlim) - np.array(self.zlim)) * 0.1)
-        self.xlim = tuple(np.array(self.xlim) + (np.array(self.target_xlim) - np.array(self.xlim)) * 0.1)
-        self.ylim = tuple(np.array(self.ylim) + (np.array(self.target_ylim) - np.array(self.ylim)) * 0.1)
+        transition_rate = self.config.visualization.view_transition_rate
+        self.zlim = tuple(np.array(self.zlim) + (np.array(self.target_zlim) - np.array(self.zlim)) * transition_rate)
+        self.xlim = tuple(np.array(self.xlim) + (np.array(self.target_xlim) - np.array(self.xlim)) * transition_rate)
+        self.ylim = tuple(np.array(self.ylim) + (np.array(self.target_ylim) - np.array(self.ylim)) * transition_rate)
         self.ax.set_xlim(self.xlim)
         self.ax.set_ylim(self.ylim)
         self.ax.set_zlim(self.zlim)
@@ -206,77 +275,98 @@ class PatternVisualizer3D(QObject):
         self._draw_pattern()
         if self.visualize_piano and key_activation_bit_array is not None:
             self._update_piano_keys(key_activation_bit_array, volumes_real)
-        plt.pause(0.002)
+        plt.pause(self.config.visualization.pause_duration)
 
 
     def _update_data_layer(self, bit_array, volumes, average_volume):
-        variances = MBC_njit_func.add_pattern(bit_array, volumes, average_volume, self.position_list, self.final_volume, self.final_volume_index, self.scaler, self.thickness_list, self.pattern_data, self.pattern_data_thickness, self.orientation)
-        pattern_data_temp, pattern_data_thickness_temp = MBC_njit_func.calculate_bubble(
+        # 清理后的高性能版本：通过物理引擎接口调用，但保持性能
+        # 1. 重置边缘层，淘汰旧数据 (从原有逻辑)
+        self.pattern_data[-1 if self.orientation == "down" else 0, :, :] = 0
+        self.pattern_data_thickness[-1 if self.orientation == "down" else 0, :, :] = 0
+        
+        # 2. 通过物理引擎接口进行气泡生成（可替换的引擎）
+        variances = self.physics_engine.add_pattern(
+            bit_array, volumes, average_volume, 
+            self.bubble_generator.position_list, 
+            self.bubble_generator.final_volume, 
+            self.bubble_generator.final_volume_index, 
+            self.bubble_generator.scaler, 
+            self.bubble_generator.thickness_list, 
+            self.pattern_data, 
+            self.pattern_data_thickness, 
+            self.orientation
+        )
+        
+        # 手动更新final_volume_index（因为add_pattern会修改但不返回）
+        active_indices = np.where(bit_array)[0]
+        if len(active_indices) > 0:
+            self.bubble_generator.final_volume_index = (self.bubble_generator.final_volume_index + len(active_indices)) % self.config.physics.final_volume_history_size
+        
+        # 3. 通过物理引擎接口进行物理计算（可替换的引擎）
+        pattern_data_temp, pattern_data_thickness_temp = self.physics_engine.calculate_bubble(
             self.pattern_data, 
             self.pattern_data_thickness, 
             self.data_height, 
             orientation=self.orientation
         )
-
-        # 更新非边缘层
+        
+        # 4. 更新非边缘层（原有逻辑）
         self.pattern_data[1:self.data_height] = pattern_data_temp[1:self.data_height]
         self.pattern_data_thickness[1:self.data_height] = pattern_data_thickness_temp[1:self.data_height]
-
-        if variances:
-            variances_threashhold = 6  # 根据需要调整阈值
-            if np.mean(variances) < variances_threashhold:
-                self.scaler += 0.01
-            else:
-                self.scaler = max(0, self.scaler - 0.01)
+        
+        # 5. 使用BubbleGenerator的状态管理方法
+        self.bubble_generator.update_scaler_from_variances(variances)
+        
+        # 6. 更新兼容性属性
+        self.scaler = self.bubble_generator.scaler
 
     def _draw_pattern(self):
+        # 渲染引擎分离版本：支持可替换的渲染系统
         all_positions = self.all_positions_array
-        orientation_int=0 if self.orientation == "up" else 1
-        all_x, all_y, all_z, all_sizes, all_opacity, all_types, all_color_blend_factors = MBC_njit_func.calculate_pattern_data_3d(
+        orientation_int = 0 if self.orientation == "up" else 1
+        
+        # 1. 通过物理引擎获取渲染数据
+        all_x, all_y, all_z, all_sizes, all_opacity, all_types, all_color_blend_factors = self.physics_engine.calculate_render_data(
             self.pattern_data,
             self.pattern_data_thickness,
             self.offset,
-            all_positions[:, 0],  # 所有气泡的x坐标
-            all_positions[:, 1],  # 所有气泡的y坐标
-            self.bubble_positions[:, 0],  # 每个气泡的x坐标
-            self.bubble_positions[:, 1],  # 每个气泡的y坐标
-            self.bubble_indices,  # 气泡的索引编号
-            self.opacity_dict,
-            self.data_height,
-            orientation_int,
-            self.snow_ttl,
-            self.MAX_SNOW_TTL
+            all_positions[:, 0], all_positions[:, 1],
+            self.bubble_positions[:, 0], self.bubble_positions[:, 1],
+            self.bubble_indices, self.opacity_dict, self.data_height,
+            orientation_int, self.snow_ttl, self.MAX_SNOW_TTL
         )
         
-        # 使用njit优化的颜色计算函数
+        # 2. 转换为标准化的渲染粒子对象
         base_color = np.array(self.data_color)
-        colors = MBC_njit_func.calculate_particle_colors_njit(
-            all_types,
-            all_color_blend_factors,
-            all_opacity,
-            base_color[0],  # R
-            base_color[1],  # G 
-            base_color[2]   # B
+        particles = convert_njit_to_particles(
+            all_x, all_y, all_z, all_sizes, all_opacity, 
+            all_types, all_color_blend_factors, base_color
         )
-
-        # 设置绘图参数
-        scatter_kwargs = {
-            'c': colors,
-            'marker': 'o',
-            's': all_sizes,
-            'alpha': None,  # 使用颜色中的alpha通道
-            'edgecolors': 'none',  # 移除边框
-            'antialiased': True,  # 抗锯齿设定
-        }
         
-        # 绘制散点图
-        self.ax.scatter(all_x, all_y, all_z, **scatter_kwargs)
+        # 3. 创建相机状态
+        camera = CameraState(
+            position=(0, 0, 0),  # matplotlib使用view_init，这些值会被覆盖
+            target=(0, 0, 0),
+            up=(0, 0, 1),
+            elev=self.elev,
+            azim=self.azim_angle,
+            x_range=self.xlim,
+            y_range=self.ylim, 
+            z_range=self.zlim
+        )
+        
+        # 4. 通过渲染引擎接口渲染（可替换的渲染器）
+        self.render_engine.render_frame(particles, camera)
 
     def toggle_orientation(self):
         if self.orientation == "up":
             self.orientation = "down"
         else:
             self.orientation = "up"
+
+        # 同步模块的方向状态
+        self.bubble_generator.toggle_orientation()
+        self.physics_handler.toggle_orientation()
 
         max_x = max(abs(pos[0]) for pos in self.position_list)
         max_y = max(abs(pos[1]) for pos in self.position_list)
@@ -396,6 +486,14 @@ class PatternVisualizer3D(QObject):
         self.fig.set_facecolor(self.fig_themes_rgba[self.theme_index])  # 设置新的 facecolor
         self.ax.set_facecolor(self.fig_themes_rgba[self.theme_index])
         self.data_color = self.data_themes_rgb[self.theme_index]  # 更新数据颜色
+        
+        # 更新渲染引擎设置
+        updated_settings = RenderSettings(
+            background_color=self.fig_themes_rgba[self.theme_index],
+            window_opacity=self.window_opacity,
+            antialiasing=True
+        )
+        self.render_engine.update_settings(updated_settings)
 
     def on_scroll(self, event):
         """处理鼠标滚轮事件来调整窗口透明度"""
@@ -414,24 +512,42 @@ class PatternVisualizer3D(QObject):
             self.fig.canvas.manager.window.show()  # 需要重新显示窗口使设置生效
 
 def init_njit_func(visualizer):
+    """初始化njit函数 - 使用物理引擎接口进行初始化"""
+    # 创建测试数据进行初始化
     bit_array = np.unpackbits(np.frombuffer(bytes(15), dtype=np.uint8))
-    MBC_njit_func.add_pattern(bit_array, [1] * 120, 0, visualizer.position_list, visualizer.final_volume, visualizer.final_volume_index, visualizer.scaler, visualizer.thickness_list, visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.orientation)
-    MBC_njit_func.calculate_bubble(visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.data_height)
-    bubble_positions = visualizer.bubble_positions
-    all_positions = np.array(list(visualizer.all_positions))
-    opacity_values = visualizer.opacity_dict
-    MBC_njit_func.calculate_pattern_data_3d(
+    test_volumes = [1] * 120
+    
+    # 使用物理引擎接口进行初始化（测试njit编译）
+    # 1. 测试气泡生成
+    test_variances = visualizer.physics_engine.add_pattern(
+        bit_array, test_volumes, 0,
+        visualizer.bubble_generator.position_list,
+        visualizer.bubble_generator.final_volume,
+        visualizer.bubble_generator.final_volume_index,
+        visualizer.bubble_generator.scaler,
+        visualizer.bubble_generator.thickness_list,
         visualizer.pattern_data,
         visualizer.pattern_data_thickness,
-        visualizer.offset,
-        all_positions[:, 0],  # x坐标
-        all_positions[:, 1],  # y坐标
-        bubble_positions[:, 0],  # position_index的x坐标
-        bubble_positions[:, 1],  # position_index的y坐标
-        visualizer.bubble_indices,
-        opacity_values,
-        visualizer.data_height,
-        0 if visualizer.orientation == "up" else 1,  # orientation_int
-        visualizer.snow_ttl,
-        visualizer.MAX_SNOW_TTL
+        visualizer.orientation
     )
+    
+    # 2. 测试物理计算
+    test_pattern_data, test_pattern_thickness = visualizer.physics_engine.calculate_bubble(
+        visualizer.pattern_data, visualizer.pattern_data_thickness, 
+        visualizer.data_height, visualizer.orientation
+    )
+    
+    # 3. 测试渲染数据计算
+    all_positions = visualizer.all_positions_array
+    orientation_int = 0 if visualizer.orientation == "up" else 1
+    test_render_data = visualizer.physics_engine.calculate_render_data(
+        visualizer.pattern_data, visualizer.pattern_data_thickness, visualizer.offset,
+        all_positions[:, 0], all_positions[:, 1],
+        visualizer.bubble_positions[:, 0], visualizer.bubble_positions[:, 1],
+        visualizer.bubble_indices, visualizer.opacity_dict, visualizer.data_height,
+        orientation_int, visualizer.snow_ttl, visualizer.MAX_SNOW_TTL
+    )
+    
+    # 4. 清理测试数据
+    visualizer.physics_handler.reset_physics()
+    visualizer.bubble_generator.reset_generator()

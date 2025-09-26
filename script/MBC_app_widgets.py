@@ -1,4 +1,5 @@
 import MBC_config
+from MBC_config import get_config
 import threading
 from collections import deque
 import numpy as np
@@ -10,23 +11,35 @@ import os
 
 class MidiVisualizer:
     def __init__(self, visualizer):
+        self.config = get_config()
         self.visualizer = visualizer
         self.wav_channel = None
         self.process_midi_thread_bool = True
         self.midi_thread = None
-        self.volumes = [0] * 120
-        self.total_volumes = deque(maxlen=240)
-        self.key_activation = np.zeros(120, dtype=int)
-        self.new_pattern = bytes(15)
-        self.key_activation_bytes = bytes(15)
+        
+        # Initialize arrays with config values
+        pattern_key_count = self.config.audio.pattern_key_count
+        midi_key_count = self.config.audio.midi_note_max - self.config.audio.midi_note_min + 1
+        
+        self.volumes = [0] * pattern_key_count
+        self.total_volumes = deque(maxlen=self.config.audio.total_volumes_maxlen)
+        self.key_activation = np.zeros(pattern_key_count, dtype=int)
+        self.new_pattern = bytes(15)  # Keep as is for now
+        self.key_activation_bytes = bytes(15)  # Keep as is for now
         self.update_count = 0
-        self.zero_pattern_interval = 2
+        self.zero_pattern_interval = self.config.audio.zero_pattern_interval
         self.default_wav_playing = False
-        self.key_activation_real = np.zeros(128, dtype=np.uint8)  # 真实钢琴键位
+        self.key_activation_real = np.zeros(midi_key_count + 8, dtype=np.uint8)  # 真实钢琴键位
         self.key_activation_real_bytes = bytes(16)  # 16 bytes for 128 bits (1 bit per key)
-        self.volumes_real = np.zeros(128, dtype=np.uint8)
-        pygame.mixer.init(frequency=44100, size=-16, channels=2)
-        pygame.mixer.set_num_channels(2)
+        self.volumes_real = np.zeros(midi_key_count + 8, dtype=np.uint8)
+        
+        # Initialize pygame mixer with config
+        pygame.mixer.init(
+            frequency=self.config.audio.frequency,
+            size=self.config.audio.size,
+            channels=self.config.audio.channels
+        )
+        pygame.mixer.set_num_channels(self.config.audio.mixer_channels)
     
     def prepare_midi_file(self, midi_path):
         temp_midi_path = "temp_midi_file.mid"
@@ -61,8 +74,12 @@ class MidiVisualizer:
         
         # Reinitialize mixer to ensure clean state
         pygame.mixer.quit()
-        pygame.mixer.init(frequency=44100, size=-16, channels=2)
-        pygame.mixer.set_num_channels(2)
+        pygame.mixer.init(
+            frequency=self.config.audio.frequency,
+            size=self.config.audio.size,
+            channels=self.config.audio.channels
+        )
+        pygame.mixer.set_num_channels(self.config.audio.mixer_channels)
 
         try:
             pygame.mixer.music.load(temp_midi_path)
@@ -74,8 +91,8 @@ class MidiVisualizer:
             mp3_path = base_path + '.mp3'
             
             # Play audio if it exists (either default or matching vocal file)
-            if midi_path == MBC_config.DEFAULT_MIDI_PATH and os_path.exists(MBC_config.WAV_FILE_PATH):
-                vocal_to_play = MBC_config.WAV_FILE_PATH
+            if midi_path == self.config.file_paths.default_midi_path and os_path.exists(self.config.file_paths.default_wav_path):
+                vocal_to_play = self.config.file_paths.default_wav_path
                 vocal_file_type = "wav"
             elif os_path.exists(wav_path):
                 vocal_to_play = wav_path
@@ -90,9 +107,9 @@ class MidiVisualizer:
                 self.wav_channel = pygame.mixer.Channel(1)
                 vocal_sound = pygame.mixer.Sound(vocal_to_play)
                 if vocal_file_type == "wav":
-                    pygame.time.delay(300)
+                    pygame.time.delay(self.config.audio.wav_delay_ms)
                 if vocal_file_type == "mp3":
-                    pygame.time.delay(100)
+                    pygame.time.delay(self.config.audio.mp3_delay_ms)
                 self.wav_channel.play(vocal_sound)
                 self.default_wav_playing = True
         except Exception as e:
@@ -108,11 +125,10 @@ class MidiVisualizer:
         return min_note, max_note
     
     def map_note_to_range(self, note, min_note, max_note):
-        # Map MIDI note (0-127) to piano key index (0-87 for 88 keys)
-        # A0 (21) to C8 (108) is the standard 88-key piano range
-        piano_key = note - 21  # Shift to 0-87 range
+        # Map MIDI note to piano key index using config values
+        piano_key = note - self.config.audio.midi_note_min
         # Ensure the note is within the piano's range
-        piano_key = max(0, min(87, piano_key))
+        piano_key = max(0, min(self.config.audio.piano_key_count - 1, piano_key))
         return piano_key
     
     def process_midi(self, midi_iterator, min_note, max_note):
@@ -122,15 +138,15 @@ class MidiVisualizer:
 
                 # 1. 计算new_pattern（120键映射，用于模式）
                 mapped_note = self.map_note_to_range(note, min_note, max_note)
-                if 0 <= mapped_note < 120:
+                if 0 <= mapped_note < self.config.audio.pattern_key_count:
                     self.key_activation[mapped_note] = 1 if (msg.type == 'note_on' and msg.velocity > 0) else 0
                     self.volumes[mapped_note] = msg.velocity if msg.type == 'note_on' else 0
                     self.total_volumes.append(msg.velocity)
 
                 self.new_pattern = np.packbits(self.key_activation).tobytes()
 
-                # 2. 记录真实键位激活（21~108，用于钢琴可视化）
-                if 21 <= note <= 108:
+                # 2. 记录真实键位激活（用于钢琴可视化）
+                if self.config.audio.midi_note_min <= note <= self.config.audio.midi_note_max:
                     self.key_activation_real[note] = 1 if msg.velocity > 0 else 0
                     self.volumes_real[note] = msg.velocity  # 用真实键位存音量
 
@@ -168,7 +184,7 @@ class MidiVisualizer:
             
             if self.update_count % self.zero_pattern_interval == 0:
                 self.new_pattern = bytes(15)
-                one_volumes = [1] * 120
+                one_volumes = [1] * self.config.audio.pattern_key_count
                 self.visualizer.update_pattern(self.new_pattern, one_volumes, average_volume, None, None)
             else:
                 self.visualizer.update_pattern(

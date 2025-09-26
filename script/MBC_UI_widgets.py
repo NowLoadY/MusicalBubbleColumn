@@ -4,11 +4,13 @@ from PyQt5 import QtCore
 from PyQt5 import QtGui
 import time
 import MBC_config
+from MBC_config import get_config
 
 
 class RoundedProgressDialog(QProgressDialog):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.config = get_config()
         self.setValue(0)  # 设置初始进度值为 0
         self.setBar(ShadowProgressBar())  # 使用自定义的进度条
 
@@ -52,27 +54,28 @@ class RoundedProgressDialog(QProgressDialog):
         绘制带圆角和模糊阴影效果的图标。
         """
         # 加载图标
-        icon_pixmap = QtGui.QPixmap(MBC_config.PATH_TO_ICON)
+        config = get_config()
+        icon_pixmap = QtGui.QPixmap(config.file_paths.icon_path)
 
         # 计算缩放后的图标大小
         icon_size = min(self.height(), self.width()) // 3
         scaled_icon = icon_pixmap.scaled(icon_size, icon_size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
 
         icon_x = self.width() // 5  # 图标 x 坐标
-        icon_y = 20  # 图标 y 坐标
-        shadow_offset = 3
-        corner_radius = int(icon_size*0.2)  # 阴影圆角半径
+        icon_y = config.ui.icon_y_offset  # 图标 y 坐标
+        shadow_offset = config.ui.shadow_offset
+        corner_radius = int(icon_size * config.ui.corner_radius_factor)  # 阴影圆角半径
         shadow_color = QtGui.QColor(0, 0, 0, 60)  # 半透明黑色阴影
 
         # 创建阴影的圆角矩形路径
         shadow_path = QtGui.QPainterPath()
         shadow_path.addRoundedRect(icon_x + shadow_offset, icon_y + shadow_offset,
-                                scaled_icon.width(), scaled_icon.height(),
-                                corner_radius, corner_radius)
+                               scaled_icon.width(), scaled_icon.height(),
+                               corner_radius, corner_radius)
 
         # 启用模糊效果
         shadow_blur_effect = QGraphicsBlurEffect()
-        shadow_blur_effect.setBlurRadius(10)
+        shadow_blur_effect.setBlurRadius(config.ui.shadow_blur_radius)
 
         # 绘制模糊阴影
         painter.save()
@@ -131,6 +134,7 @@ class ShadowProgressBar(QProgressBar):
 class LoadingManager():
     def __init__(self, loading_msg):
         super().__init__()
+        self.config = get_config()
         self.loading_msg = loading_msg
         self.fully_complete = False
 
@@ -138,8 +142,10 @@ class LoadingManager():
         self.fully_complete = True
         self.loading_msg.close()
 
-    def smooth_transition(self, start_value, end_value, duration=1):
-        step_count = int(duration * 30)  # Smooth steps per second (30fps)
+    def smooth_transition(self, start_value, end_value, duration=None):
+        if duration is None:
+            duration = self.config.ui.loading_transition_duration
+        step_count = int(duration * self.config.ui.loading_smooth_fps)  # Smooth steps per second
         step_size = (end_value - start_value) / step_count
         
         for i in range(step_count):
@@ -152,7 +158,8 @@ class LoadingManager():
 
 class FileDialogManager:
     def __init__(self, visualizer):
-        self.current_midi_path = MBC_config.DEFAULT_MIDI_PATH
+        self.config = get_config()
+        self.current_midi_path = self.config.file_paths.default_midi_path
         self.file_dialog = None
         self.visualizer = visualizer
         self.should_switch_music = False
@@ -200,12 +207,12 @@ class FileDialogManager:
         self.file_dialog = QFileDialog(None, "选择MIDI文件", "", "MIDI files (*.mid *.midi);;All files (*.*)", options=options)
         self.file_dialog.setFileMode(QFileDialog.ExistingFile)
         self.file_dialog.setViewMode(QFileDialog.List)
-        self.file_dialog.resize(800, 800)  # 调整对话框大小
+        self.file_dialog.resize(*self.config.ui.file_dialog_size)  # 调整对话框大小
         self.file_dialog.setWindowFlags(self.file_dialog.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
         
         # 设置对话框位置在屏幕左侧
         screen = QApplication.primaryScreen().geometry()
-        dialog_x = screen.x() + 50  # 距离左边界50像素
+        dialog_x = screen.x() + self.config.ui.file_dialog_offset_x  # 距离左边界像素
         dialog_y = (screen.height() - self.file_dialog.height()) // 2  # 垂直居中
         self.file_dialog.move(dialog_x, dialog_y)
         
@@ -237,22 +244,23 @@ class FileDialogManager:
 
 class LoadingMessageManager:
     def __init__(self):
+        self.config = get_config()
         self.loading_msg = None
         
     def initialize(self, app):
         self.loading_msg = RoundedProgressDialog("Musical Bubble Column!\n正在预编译...", None, 0, 0)
-        self.loading_msg.setWindowTitle("Musical Bubble Column!")
+        self.loading_msg.setWindowTitle(self.config.ui.window_title.replace("🎼", "").replace("🎹", ""))
         self.loading_msg.setCancelButton(None)
         self.loading_msg.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)
         self.loading_msg.setAttribute(QtCore.Qt.WA_TranslucentBackground)
-        self.loading_msg.setMinimumSize(600, 150)
-        self.loading_msg.setWindowIcon(QtGui.QIcon(MBC_config.PATH_TO_ICON))
+        self.loading_msg.setMinimumSize(*self.config.ui.loading_dialog_size)
+        self.loading_msg.setWindowIcon(QtGui.QIcon(self.config.file_paths.icon_path))
         
         # 设置窗口位置
         screen_geometry = app.primaryScreen().geometry()
         self.loading_msg.move(
             screen_geometry.x() + (screen_geometry.width() - self.loading_msg.width()) // 2,
-            (screen_geometry.y() + screen_geometry.height()) // 8
+            (screen_geometry.height() - self.loading_msg.height()) // 2
         )
         
     def show(self):

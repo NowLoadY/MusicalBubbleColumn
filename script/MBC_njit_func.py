@@ -60,7 +60,7 @@ def calculate_bubble(pattern_data, pattern_data_thickness, data_height, orientat
             rise_speeds = 6.0 + np.minimum(th_values * 0.1, 8.0) + np.random.randint(-3,4,size=x.size)
 
         # 计算上升（或下降）速度
-        rise_speeds = np.clip(rise_speeds, 0.0, 18.0)
+        rise_speeds = np.maximum(0.0, np.minimum(rise_speeds, 18.0))
 
         # 目标层
         target_layers = layer + direction * rise_speeds.astype(np.int32)
@@ -68,8 +68,8 @@ def calculate_bubble(pattern_data, pattern_data_thickness, data_height, orientat
         # 抖动
         jitter_x = np.random.randint(-1, 2, size=x.size)
         jitter_y = np.random.randint(-1, 2, size=y.size)
-        target_x = np.clip(x + jitter_x, 0, max_x)
-        target_y = np.clip(y + jitter_y, 0, max_y)
+        target_x = np.maximum(0, np.minimum(x + jitter_x, max_x))
+        target_y = np.maximum(0, np.minimum(y + jitter_y, max_y))
 
         # 写入目标层
         for i in range(len(x)):

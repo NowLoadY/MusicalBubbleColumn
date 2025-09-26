@@ -17,6 +17,7 @@ from PyQt5 import QtCore
 from MBC_UI_widgets import *
 import MBC_app_widgets
 import MBC_Core
+from MBC_config import get_config
 
 
 if __name__ == "__main__":
@@ -33,7 +34,16 @@ if __name__ == "__main__":
     print()  # Empty line for better readability
 
     app = QApplication(sys.argv)  # 在主线程中创建 QApplication 实例
-    visualizer = MBC_Core.PatternVisualizer3D(orientation="up", pos_type="Fibonacci", visualize_piano=True)# Fibonacci circle arc
+    
+    # Load centralized configuration
+    config = get_config()
+    
+    # Create visualizer with config defaults (can be overridden)
+    visualizer = MBC_Core.PatternVisualizer3D(
+        orientation=config.visualization.default_orientation, 
+        pos_type=config.visualization.default_pos_type, 
+        visualize_piano=config.visualization.visualize_piano
+    )
     loading_msg_manager = LoadingMessageManager()
     loading_msg_manager.initialize(app)
     loading_msg_manager.show()
