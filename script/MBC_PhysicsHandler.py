@@ -61,6 +61,7 @@ class PhysicsHandler:
         # 雪花效果相关 (用于down模式)
         self.MAX_SNOW_STACK_HEIGHT = self.config.physics.max_snow_stack_height
         self.snow_ttl = np.zeros((self.MAX_SNOW_STACK_HEIGHT, self.pattern_data.shape[1], self.pattern_data.shape[2]), dtype=np.int32)
+        self.snow_sizes = np.zeros(self.snow_ttl.shape, dtype=np.float32)
         self.MAX_SNOW_TTL = self.config.physics.max_snow_ttl
     
     def toggle_orientation(self):
@@ -73,6 +74,8 @@ class PhysicsHandler:
         self.pattern_data_thickness.fill(0) 
         if hasattr(self, 'snow_ttl'):
             self.snow_ttl.fill(0)
+        if hasattr(self, 'snow_sizes'):
+            self.snow_sizes.fill(0)
     
     def get_physics_statistics(self) -> Dict:
         """获取物理统计信息"""

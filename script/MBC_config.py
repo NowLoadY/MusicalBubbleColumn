@@ -45,22 +45,22 @@ class VisualizationConfig:
     default_orientation: str = "up"  # "up" or "down"
     default_pos_type: str = "Fibonacci"  # "Fibonacci", "circle", "arc"
     visualize_piano: bool = True
-    
+
     # View settings
     default_elev: float = 37.0
     default_azim_angle: float = 30.0
     default_azim_speed: float = 1.0
     window_opacity: float = 1.0
-    
+
     # Bubble position generation
     num_positions: int = 120
     inner_radius: float = 2.0
     outer_radius: float = 36.0
-    
+
     # Animation settings
     pause_duration: float = 0.002
     view_transition_rate: float = 0.1
-    
+
 
 @dataclass
 class PhysicsConfig:
@@ -68,28 +68,18 @@ class PhysicsConfig:
     # Volume and scaling
     max_volume_up: int = 500
     max_volume_down: int = 200
+    birth_curve_up: float = 4.35
+    birth_curve_down: float = 2.5
     scaler_increment: float = 0.01
     variance_threshold: float = 6.0
     final_volume_history_size: int = 30
-    
-    # Bubble movement
-    base_rise_speed_up: float = 5.0
-    max_progress_bonus: float = 10.0
-    thickness_speed_factor: float = 0.1
-    max_thickness_bonus: float = 8.0
-    base_rise_speed_down: float = 6.0
-    jitter_range: int = 3  # -3 to +4 for down mode
+
+    # Bubble movement and interactions
     max_rise_speed: float = 18.0
-    
-    # Size adjustments
-    size_increase_factor: float = 0.05
-    
-    # Bubble merging
     merge_interval: int = 5  # Check merging every N layers
     grid_cell_size: int = 3
     adjacent_grid_threshold: int = 1
-    merge_distance_factor: float = 2.0
-    
+
     # Snow effects (for down orientation)
     max_snow_stack_height: int = 5
     max_snow_ttl: int = 400
@@ -97,7 +87,34 @@ class PhysicsConfig:
     snow_size_max: float = 40.0
     snow_opacity_min: float = 0.2
     snow_opacity_max: float = 0.8
-    
+
+
+@dataclass
+class ScaleConfig:
+    """Real-world scale used by the bubble simulation."""
+    column_height_m: float = 1.2
+    horizontal_cell_pitch_m: float = 0.003
+    bubble_area_unit_m2: float = 2.5e-7
+    bubble_screen_radius_per_meter: float = 8.4
+    min_bubble_screen_radius: float = 0.010
+    inactive_screen_radius: float = 0.010
+    light_particle_screen_radius: float = 0.044
+    lampshade_screen_radius: float = 0.055
+    simulation_step_s: float = 1.0 / 30.0
+    gravity_m_s2: float = 9.80665
+    atmospheric_pressure_pa: float = 101325.0
+    liquid_density_kg_m3: float = 997.0
+    gas_density_kg_m3: float = 1.2
+    water_kinematic_viscosity_m2_s: float = 1.0e-6
+    surface_tension_n_m: float = 0.072
+    drag_coefficient: float = 0.47
+    min_bubble_radius_m: float = 0.0012
+    max_bubble_radius_m: float = 0.009
+    stable_bubble_radius_m: float = 0.0065
+    split_weber_number: float = 42.0
+    merge_efficiency: float = 0.96
+    coalescence_factor: float = 0.88
+
 
 @dataclass
 class AudioConfig:
@@ -107,21 +124,21 @@ class AudioConfig:
     size: int = -16
     channels: int = 2
     mixer_channels: int = 2
-    
+
     # Timing and delays
     wav_delay_ms: int = 300
     mp3_delay_ms: int = 100
-    
+
     # MIDI processing
     piano_key_count: int = 88  # Standard piano keys
     midi_note_min: int = 21   # A0
     midi_note_max: int = 108  # C8
     pattern_key_count: int = 120  # For pattern generation
-    
+
     # Volume processing
     total_volumes_maxlen: int = 240
     zero_pattern_interval: int = 2
-    
+
 
 @dataclass
 class UIConfig:
@@ -129,27 +146,27 @@ class UIConfig:
     # Window dimensions
     default_figure_size: Tuple[float, float] = (5.0, 6.0)
     window_title: str = "🎼Musical Bubble Column!🎹"
-    
+
     # Loading dialog
     loading_dialog_size: Tuple[int, int] = (600, 150)
     loading_smooth_fps: int = 30
     loading_transition_duration: float = 1.0
-    
+
     # File dialog
     file_dialog_size: Tuple[int, int] = (800, 800)
     file_dialog_offset_x: int = 50
-    
+
     # Progress bar and UI effects
     icon_y_offset: int = 20
     shadow_offset: int = 3
     shadow_blur_radius: int = 10
     corner_radius_factor: float = 0.2
-    
+
     # Slider settings
     elev_slider_pos: List[float] = field(default_factory=lambda: [0.9, 0.1, 0.03, 0.8])
     azim_slider_pos: List[float] = field(default_factory=lambda: [0.2, 0.02, 0.6, 0.03])
     azim_slider_pos_no_piano: List[float] = field(default_factory=lambda: [0.2, 0.0, 0.6, 0.03])
-    
+
     # Piano visualization
     piano_xlim: Tuple[int, int] = (0, 52)  # 52 white keys
     piano_ylim: Tuple[int, int] = (0, 1)
@@ -158,7 +175,7 @@ class UIConfig:
     black_key_height: float = 0.6
     black_key_y_offset: float = 0.4
     black_key_x_offset: float = 0.275
-    
+
 
 @dataclass
 class PerformanceConfig:
@@ -167,18 +184,18 @@ class PerformanceConfig:
     auto_gpu_selection: bool = True
     gpu_threshold_elements: int = 1000  # Switch to GPU above this threshold
     performance_history_size: int = 10
-    
+
     # Rendering optimization
     particle_count_light: int = 200  # For light effects
     emphasis_bubble_layers: int = 3  # Number of emphasis layers
     emphasis_bubble_opacities: List[float] = field(default_factory=lambda: [0.8, 0.3, 0.1])
     emphasis_bubble_sizes: List[float] = field(default_factory=lambda: [100.0, 250.0, 500.0])
-    
+
     # Memory and caching
     numba_cache: bool = True
     numba_nogil: bool = True
     numba_fastmath: bool = True
-    
+
 
 @dataclass
 class AppConfig:
@@ -187,19 +204,20 @@ class AppConfig:
     theme: ThemeConfig = field(default_factory=ThemeConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     physics: PhysicsConfig = field(default_factory=PhysicsConfig)
+    scale: ScaleConfig = field(default_factory=ScaleConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
-    
+
     def save_to_file(self, filepath: str = None) -> None:
         """Save configuration to JSON file."""
         if filepath is None:
             filepath = self.file_paths.config_file
-        
+
         config_dict = self._to_dict()
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(config_dict, f, indent=2, ensure_ascii=False)
-    
+
     def _to_dict(self) -> dict:
         """Convert config to dictionary for JSON serialization."""
         result = {}
@@ -209,28 +227,28 @@ class AppConfig:
             else:
                 result[field_name] = field_value
         return result
-    
+
     @classmethod
     def load_from_file(cls, filepath: str = None) -> 'AppConfig':
         """Load configuration from JSON file."""
         config = cls()  # Start with defaults
-        
+
         if filepath is None:
             filepath = config.file_paths.config_file
-        
+
         if os_path.exists(filepath):
             try:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     config_dict = json.load(f)
-                
+
                 # Update config with loaded values
                 config._from_dict(config_dict)
             except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
                 print(f"Warning: Could not load config from {filepath}: {e}")
                 print("Using default configuration.")
-        
+
         return config
-    
+
     def _from_dict(self, config_dict: dict) -> None:
         """Update config from dictionary."""
         for section_name, section_data in config_dict.items():

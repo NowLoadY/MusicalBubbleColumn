@@ -3,7 +3,23 @@ import numpy as np
 
 
 @njit
-def add_pattern(bit_array, volumes, average_volume, position_list, final_volume, final_volume_index, scaler, thickness_list, pattern_data, pattern_data_thickness, orientation):
+def add_pattern(
+    bit_array,
+    volumes,
+    average_volume,
+    position_list,
+    final_volume,
+    final_volume_index,
+    scaler,
+    thickness_list,
+    pattern_data,
+    pattern_data_thickness,
+    orientation,
+    max_volume_up,
+    max_volume_down,
+    birth_curve_up,
+    birth_curve_down,
+):
     variances = []
     active_indices = np.where(bit_array)[0]  # 获取活动索引
     for i in active_indices:
@@ -11,32 +27,168 @@ def add_pattern(bit_array, volumes, average_volume, position_list, final_volume,
         volume_idx = min(i, len(volumes) - 1) if len(volumes) > 0 else 0
         x_center, y_center = position_list[i]
         volume_factor = ((volumes[volume_idx] - average_volume) / average_volume) if average_volume else 0
-        final_volume_piece = min((500 if orientation == "up" else 200), (1 + scaler * volume_factor) ** (5 if orientation == "up" else 2.5))
+        max_volume = max_volume_up if orientation == "up" else max_volume_down
+        birth_curve = birth_curve_up if orientation == "up" else birth_curve_down
+        amplitude_base = max(0.0, 1 + scaler * volume_factor)
+        final_volume_piece = min(max_volume, amplitude_base ** birth_curve)
         final_volume[final_volume_index] = final_volume_piece
-        final_volume_index = (final_volume_index + 1) % 30
+        final_volume_index = (final_volume_index + 1) % len(final_volume)
         if final_volume_index == 0:
             variance = np.var(final_volume)
             variances.append(variance)
 
         thickness_list[i] = int(final_volume_piece)
-        total_thickness = thickness_list[i] + (1 * (119 - i)) // 119
+        total_thickness = thickness_list[i]
         pattern_data[-1 if orientation == "down" else 0, x_center, y_center] = 1
         pattern_data_thickness[-1 if orientation == "down" else 0, x_center, y_center] = total_thickness + 1
     return variances
 
 
 @njit
-def calculate_bubble(pattern_data, pattern_data_thickness, data_height, orientation="up"):
+def _clamp_int(value, low, high):
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+@njit
+def _round_to_int(value):
+    if value >= 0.0:
+        return int(value + 0.5)
+    return int(value - 0.5)
+
+
+@njit
+def _stochastic_round(value):
+    if value == 0.0:
+        return 0
+    sign = 1
+    magnitude = value
+    if value < 0.0:
+        sign = -1
+        magnitude = -value
+    base = int(magnitude)
+    fraction = magnitude - base
+    if np.random.random() < fraction:
+        base += 1
+    return sign * base
+
+
+@njit
+def _bubble_radius_m(area_units, area_unit_m2, min_radius_m, max_radius_m):
+    area_m2 = max(area_units, 1.0) * area_unit_m2
+    radius_m = np.sqrt(area_m2 / np.float32(np.pi))
+    return max(min_radius_m, min(radius_m, max_radius_m))
+
+
+@njit
+def _bubble_screen_radius(area_units, area_unit_m2, min_radius_m, max_radius_m, screen_radius_per_meter, min_screen_radius):
+    radius_m = _bubble_radius_m(area_units, area_unit_m2, min_radius_m, max_radius_m)
+    return max(min_screen_radius, radius_m * screen_radius_per_meter)
+
+
+@njit
+def _terminal_velocity_m_s(
+    radius_m,
+    gravity_m_s2,
+    liquid_density_kg_m3,
+    gas_density_kg_m3,
+    water_kinematic_viscosity_m2_s,
+    drag_coefficient,
+):
+    density_delta = max(liquid_density_kg_m3 - gas_density_kg_m3, 1.0)
+    dynamic_viscosity = max(liquid_density_kg_m3 * water_kinematic_viscosity_m2_s, 1.0e-9)
+    stokes = (2.0 * density_delta * gravity_m_s2 * radius_m * radius_m) / (9.0 * dynamic_viscosity)
+    inertial = np.sqrt(
+        max(
+            (8.0 * density_delta * gravity_m_s2 * radius_m)
+            / (3.0 * max(drag_coefficient, 1.0e-6) * liquid_density_kg_m3),
+            0.0,
+        )
+    )
+    return max(0.0, min(stokes, inertial))
+
+
+@njit
+def _hydrostatic_area_units(
+    area_units,
+    current_layer,
+    target_layer,
+    data_height,
+    vertical_cell_pitch_m,
+    atmospheric_pressure_pa,
+    liquid_density_kg_m3,
+    gravity_m_s2,
+):
+    current_depth_m = max(data_height - 1 - current_layer, 0) * vertical_cell_pitch_m
+    target_depth_m = max(data_height - 1 - target_layer, 0) * vertical_cell_pitch_m
+    current_pressure = atmospheric_pressure_pa + liquid_density_kg_m3 * gravity_m_s2 * current_depth_m
+    target_pressure = atmospheric_pressure_pa + liquid_density_kg_m3 * gravity_m_s2 * target_depth_m
+    pressure_ratio = current_pressure / max(target_pressure, 1.0)
+    return area_units * pressure_ratio ** (2.0 / 3.0)
+
+
+@njit
+def _write_bubble(pattern_data_temp, pattern_data_thickness_temp, layer, x, y, area_units, max_volume, merge_efficiency):
+    if area_units <= 0.0:
+        return
+    if pattern_data_temp[layer, x, y] == 1.0:
+        existing = pattern_data_thickness_temp[layer, x, y]
+        pattern_data_thickness_temp[layer, x, y] = min(max_volume, existing + area_units * merge_efficiency)
+    else:
+        pattern_data_temp[layer, x, y] = 1.0
+        pattern_data_thickness_temp[layer, x, y] = min(max_volume, area_units)
+
+
+@njit
+def calculate_bubble(
+    pattern_data,
+    pattern_data_thickness,
+    data_height,
+    orientation,
+    vertical_cell_pitch_m,
+    horizontal_cell_pitch_m,
+    bubble_area_unit_m2,
+    simulation_step_s,
+    gravity_m_s2,
+    atmospheric_pressure_pa,
+    liquid_density_kg_m3,
+    gas_density_kg_m3,
+    water_kinematic_viscosity_m2_s,
+    surface_tension_n_m,
+    drag_coefficient,
+    min_bubble_radius_m,
+    max_bubble_radius_m,
+    stable_bubble_radius_m,
+    split_weber_number,
+    merge_efficiency,
+    coalescence_factor,
+    max_rise_speed,
+    merge_interval,
+    merge_cell_size,
+    adjacent_grid_threshold,
+    max_volume_up,
+    max_volume_down,
+):
     pattern_data_temp = np.zeros(pattern_data.shape, dtype=np.float32)
     pattern_data_thickness_temp = np.zeros(pattern_data_thickness.shape, dtype=np.float32)
 
-    # 遍历方向
     if orientation == "up":
         layer_range = range(0, data_height - 1)
         direction = 1
+        max_volume = max_volume_up
     else:
         layer_range = range(data_height - 1, 0, -1)
         direction = -1
+        max_volume = max_volume_down
+
+    max_x = pattern_data_temp.shape[1] - 1
+    max_y = pattern_data_temp.shape[2] - 1
+    max_layer = pattern_data_temp.shape[0] - 1
+    safe_vertical_pitch = max(vertical_cell_pitch_m, 1.0e-6)
+    safe_horizontal_pitch = max(horizontal_cell_pitch_m, 1.0e-6)
 
     for layer in layer_range:
         x, y = np.nonzero(pattern_data[layer])
@@ -44,152 +196,143 @@ def calculate_bubble(pattern_data, pattern_data_thickness, data_height, orientat
             continue
 
         thickness = pattern_data_thickness[layer]
-        max_x = pattern_data_temp.shape[1] - 1
-        max_y = pattern_data_temp.shape[2] - 1
-
-        # 厚度值
-        th_values = np.empty(x.size, dtype=np.float32)
         for i in range(x.size):
-            th_values[i] = thickness[x[i], y[i]]
+            px = x[i]
+            py = y[i]
+            area_units = thickness[px, py]
+            if area_units <= 0.0:
+                continue
 
-        # 进度因子
-        if orientation == "up":
-            progress = layer / (data_height - 1)
-            rise_speeds = 5.0 + np.minimum(10.0 * progress, 10.0) + np.minimum(th_values * 0.1, 8.0)
-        else:
-            rise_speeds = 6.0 + np.minimum(th_values * 0.1, 8.0) + np.random.randint(-3,4,size=x.size)
+            radius_m = _bubble_radius_m(area_units, bubble_area_unit_m2, min_bubble_radius_m, max_bubble_radius_m)
+            terminal_velocity = _terminal_velocity_m_s(
+                radius_m,
+                gravity_m_s2,
+                liquid_density_kg_m3,
+                gas_density_kg_m3,
+                water_kinematic_viscosity_m2_s,
+                drag_coefficient,
+            )
+            rise_grid_float = terminal_velocity * simulation_step_s / safe_vertical_pitch
+            if orientation == "down":
+                rise_grid_float *= 0.85
+            rise_cells = _clamp_int(_round_to_int(rise_grid_float), 1, int(max_rise_speed))
+            target_layer = _clamp_int(layer + direction * rise_cells, 0, max_layer)
 
-        # 计算上升（或下降）速度
-        rise_speeds = np.maximum(0.0, np.minimum(rise_speeds, 18.0))
-
-        # 目标层
-        target_layers = layer + direction * rise_speeds.astype(np.int32)
-
-        # 抖动
-        jitter_x = np.random.randint(-1, 2, size=x.size)
-        jitter_y = np.random.randint(-1, 2, size=y.size)
-        target_x = np.maximum(0, np.minimum(x + jitter_x, max_x))
-        target_y = np.maximum(0, np.minimum(y + jitter_y, max_y))
-
-        # 写入目标层
-        for i in range(len(x)):
-            tl = target_layers[i]
-            tx = target_x[i]
-            ty = target_y[i]
-            th = th_values[i]
-
-            # 向下方向：越界气泡强制落在最后一层
-            if orientation == "down" and tl < 0:
-                tl = pattern_data.shape[0] - 1
-
-            # 边界保护
-            tl = max(0, min(tl, pattern_data.shape[0] - 1))
-
-            # 写入
-            if pattern_data_temp[tl, tx, ty] == 1:
-                pattern_data_thickness_temp[tl, tx, ty] += th
+            radius_grid = max(radius_m / safe_horizontal_pitch, 0.5)
+            reynolds = (2.0 * radius_m * terminal_velocity) / max(water_kinematic_viscosity_m2_s, 1.0e-9)
+            eotvos = (
+                (liquid_density_kg_m3 - gas_density_kg_m3)
+                * gravity_m_s2
+                * (2.0 * radius_m)
+                * (2.0 * radius_m)
+                / max(surface_tension_n_m, 1.0e-6)
+            )
+            wake_instability = max(0.0, min(1.0, (reynolds - 180.0) / 700.0))
+            shape_instability = max(0.0, min(1.0, (eotvos - 3.0) / 9.0))
+            effective_diffusivity = water_kinematic_viscosity_m2_s * (1.0 + min(reynolds, 1800.0) * 0.06)
+            diffusion_cells = np.sqrt(2.0 * effective_diffusivity * simulation_step_s) / safe_horizontal_pitch
+            wake_strength = diffusion_cells + (wake_instability + shape_instability) * min(2.4, radius_grid * 1.2)
+            if orientation == "down":
+                wake_strength = max(wake_strength * 0.75, min(2.6, 0.75 + radius_grid * 0.9))
             else:
-                pattern_data_temp[tl, tx, ty] = 1
-                pattern_data_thickness_temp[tl, tx, ty] = th
+                wake_strength = max(wake_strength, 0.35)
 
-            # 随高度调整气泡大小
-            if orientation == "up":
-                size_increase = 1.0 + (tl / data_height) * 0.05
-                pattern_data_thickness_temp[tl, tx, ty] *= size_increase
+            jitter_x_float = (np.random.random() * 2.0 - 1.0) * wake_strength
+            jitter_y_float = (np.random.random() * 2.0 - 1.0) * wake_strength
+            target_x = _clamp_int(px + _stochastic_round(jitter_x_float), 0, max_x)
+            target_y = _clamp_int(py + _stochastic_round(jitter_y_float), 0, max_y)
 
-    # 优化气泡合并逻辑：每隔几层才进行合并检查
-    merge_interval = 5  # 每隔5层检查一次合并
-    for layer in range(0, data_height, merge_interval):
+            area_units = _hydrostatic_area_units(
+                area_units,
+                layer,
+                target_layer,
+                data_height,
+                safe_vertical_pitch,
+                atmospheric_pressure_pa,
+                liquid_density_kg_m3,
+                gravity_m_s2,
+            )
+
+            weber = (
+                liquid_density_kg_m3
+                * terminal_velocity
+                * terminal_velocity
+                * (2.0 * radius_m)
+                / max(surface_tension_n_m, 1.0e-6)
+            )
+            should_split = (
+                orientation == "up"
+                and area_units > 4.0
+                and (radius_m > stable_bubble_radius_m or weber > split_weber_number)
+            )
+
+            if should_split:
+                child_area = area_units * 0.5
+                separation = max(1, _round_to_int(radius_grid * 0.7))
+                angle = np.random.random() * np.float32(2.0 * np.pi)
+                split_dx = _round_to_int(np.cos(angle) * separation)
+                split_dy = _round_to_int(np.sin(angle) * separation)
+                if split_dx == 0 and split_dy == 0:
+                    split_dx = 1
+
+                x1 = _clamp_int(target_x + split_dx, 0, max_x)
+                y1 = _clamp_int(target_y + split_dy, 0, max_y)
+                x2 = _clamp_int(target_x - split_dx, 0, max_x)
+                y2 = _clamp_int(target_y - split_dy, 0, max_y)
+                _write_bubble(pattern_data_temp, pattern_data_thickness_temp, target_layer, x1, y1, child_area, max_volume, merge_efficiency)
+                _write_bubble(pattern_data_temp, pattern_data_thickness_temp, target_layer, x2, y2, child_area, max_volume, merge_efficiency)
+            else:
+                _write_bubble(pattern_data_temp, pattern_data_thickness_temp, target_layer, target_x, target_y, area_units, max_volume, merge_efficiency)
+
+    interval = max(1, merge_interval)
+    cell_size = max(1, merge_cell_size)
+    neighbor_cells = max(1, adjacent_grid_threshold)
+    for layer in range(0, data_height, interval):
         x, y = np.nonzero(pattern_data_temp[layer])
-        if len(x) < 2:  # 如果气泡数量太少，跳过合并
+        count = len(x)
+        if count < 2:
             continue
-            
-        # 使用网格法减少需要检查的气泡对
-        grid = np.zeros((pattern_data.shape[1] // 3 + 1, pattern_data.shape[2] // 3 + 1), dtype=np.int32)
-        grid_points = []
-        for i in range(len(x)):
-            grid_x = x[i] // 3
-            grid_y = y[i] // 3
-            grid[grid_x, grid_y] += 1
-            grid_points.append((grid_x, grid_y, i))
-        
-        # 只检查相邻网格中的气泡
-        for i in range(len(grid_points)):
-            gx, gy, idx = grid_points[i]
-            for j in range(i + 1, len(grid_points)):
-                gx2, gy2, idx2 = grid_points[j]
-                
-                # 只检查相邻网格
-                if abs(gx - gx2) <= 1 and abs(gy - gy2) <= 1:
-                    distance = np.sqrt((x[idx] - x[idx2]) ** 2 + (y[idx] - y[idx2]) ** 2)
-                    if 2 * distance < np.sqrt(pattern_data_thickness_temp[layer, x[idx], y[idx]] + 
-                                           pattern_data_thickness_temp[layer, x[idx2], y[idx2]]):
-                        # 合并气泡
-                        new_x = (x[idx] + x[idx2]) // 2
-                        new_y = (y[idx] + y[idx2]) // 2
-                        pattern_data_temp[layer, new_x, new_y] = 1
-                        pattern_data_thickness_temp[layer, new_x, new_y] = np.minimum(
-                            (500 if orientation == "up" else 200), 
-                            pattern_data_thickness_temp[layer, x[idx], y[idx]] + 
-                            pattern_data_thickness_temp[layer, x[idx2], y[idx2]]
-                        )
-                        pattern_data_temp[layer, x[idx], y[idx]] = 0
-                        pattern_data_temp[layer, x[idx2], y[idx2]] = 0
-                        pattern_data_thickness_temp[layer, x[idx], y[idx]] = 0
-                        pattern_data_thickness_temp[layer, x[idx2], y[idx2]] = 0
+
+        grid_x = np.empty(count, dtype=np.int32)
+        grid_y = np.empty(count, dtype=np.int32)
+        for i in range(count):
+            grid_x[i] = x[i] // cell_size
+            grid_y[i] = y[i] // cell_size
+
+        for i in range(count):
+            x1 = x[i]
+            y1 = y[i]
+            if pattern_data_temp[layer, x1, y1] == 0.0:
+                continue
+            area1 = pattern_data_thickness_temp[layer, x1, y1]
+            radius1_grid = _bubble_radius_m(area1, bubble_area_unit_m2, min_bubble_radius_m, max_bubble_radius_m) / safe_horizontal_pitch
+
+            for j in range(i + 1, count):
+                x2 = x[j]
+                y2 = y[j]
+                if pattern_data_temp[layer, x2, y2] == 0.0:
+                    continue
+                if abs(grid_x[i] - grid_x[j]) > neighbor_cells or abs(grid_y[i] - grid_y[j]) > neighbor_cells:
+                    continue
+
+                area2 = pattern_data_thickness_temp[layer, x2, y2]
+                radius2_grid = _bubble_radius_m(area2, bubble_area_unit_m2, min_bubble_radius_m, max_bubble_radius_m) / safe_horizontal_pitch
+                dx = x1 - x2
+                dy = y1 - y2
+                distance = np.sqrt(dx * dx + dy * dy)
+
+                if distance <= (radius1_grid + radius2_grid) * coalescence_factor:
+                    total_area = area1 + area2
+                    new_x = _clamp_int(_round_to_int((x1 * area1 + x2 * area2) / max(total_area, 1.0)), 0, max_x)
+                    new_y = _clamp_int(_round_to_int((y1 * area1 + y2 * area2) / max(total_area, 1.0)), 0, max_y)
+                    pattern_data_temp[layer, x1, y1] = 0.0
+                    pattern_data_temp[layer, x2, y2] = 0.0
+                    pattern_data_thickness_temp[layer, x1, y1] = 0.0
+                    pattern_data_thickness_temp[layer, x2, y2] = 0.0
+                    _write_bubble(pattern_data_temp, pattern_data_thickness_temp, layer, new_x, new_y, total_area * merge_efficiency, max_volume, 1.0)
+                    break
 
     return pattern_data_temp, pattern_data_thickness_temp
-
-
-@njit('int32[:,:](int32[:,:], int32)', cache=True, nogil=True)
-def _unique_2d(arr, width):
-    """
-    arr: (N,2) int32  坐标 (x,y)
-    width: int32      图像宽度，用于 key = y*width + x
-    返回: (M,2) int32 去重后的坐标
-    """
-    n = arr.shape[0]
-    if n == 0:
-        return arr
-
-    max_key = np.int32(0)
-    for i in range(n):
-        key = arr[i, 1] * width + arr[i, 0]
-        if key > max_key:
-            max_key = key
-
-    # 用布尔数组做哈希表
-    seen = np.zeros(max_key + 1, dtype=np.bool_)
-    tmp_x = np.empty(n, dtype=np.int32)
-    tmp_y = np.empty(n, dtype=np.int32)
-    k = 0
-    for i in range(n):
-        x = arr[i, 0]
-        y = arr[i, 1]
-        key = y * width + x
-        if not seen[key]:
-            seen[key] = True
-            tmp_x[k] = x
-            tmp_y[k] = y
-            k += 1
-    out = np.empty((k, 2), dtype=np.int32)
-    for j in range(k):
-        out[j, 0] = tmp_x[j]
-        out[j, 1] = tmp_y[j]
-    return out
-
-
-@njit('bool_(int32,int32,int32[:,:])', cache=True, nogil=True)
-def _is_active(px, py, active):
-    lo, hi = 0, active.shape[0]
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if (active[mid, 0] < px) or \
-           (active[mid, 0] == px and active[mid, 1] < py):
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo < active.shape[0] and active[lo, 0] == px and active[lo, 1] == py
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -205,8 +348,17 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         opacity_values,
         data_height,
         orientation_int,          # 0=up, 1=down
-        snow_ttl,                # (H, W) int32
+        snow_ttl,
+        snow_sizes,
         max_snow_ttl,            # int32
+        bubble_area_unit_m2,
+        min_bubble_radius_m,
+        max_bubble_radius_m,
+        bubble_screen_radius_per_meter,
+        min_bubble_screen_radius,
+        inactive_screen_radius,
+        light_particle_screen_radius,
+        lampshade_screen_radius,
     ):
     H, W = pattern_data.shape[1], pattern_data.shape[2]
 
@@ -220,8 +372,8 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
     h, w = p0.shape
     mask0 = p0.ravel() != 0
     idx = np.arange(h * w, dtype=np.int32)[mask0]
-    x0 = (idx % w).astype(np.float32)
-    y0 = (idx // w).astype(np.float32)
+    x0 = (idx // w).astype(np.float32)
+    y0 = (idx % w).astype(np.float32)
     len0 = len(x0)
 
     # ---------- 2. 强调气泡 ----------
@@ -230,12 +382,23 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         active_y = np.empty(3 * len0, dtype=np.float32)
         active_op = np.empty(3 * len0, dtype=np.float32)
         active_sz = np.empty(3 * len0, dtype=np.float32)
+        active_radius = np.empty(len0, dtype=np.float32)
+        for i in range(len0):
+            area_units = pattern_data_thickness[first_layer, int(x0[i]), int(y0[i])]
+            active_radius[i] = _bubble_screen_radius(
+                area_units,
+                bubble_area_unit_m2,
+                min_bubble_radius_m,
+                max_bubble_radius_m,
+                bubble_screen_radius_per_meter,
+                min_bubble_screen_radius,
+            )
         for i in range(3):
             off = i * len0
             active_x[off:off + len0] = x0
             active_y[off:off + len0] = y0
             active_op[off:off + len0] = np.float32([0.8, 0.3, 0.1][i])
-            active_sz[off:off + len0] = np.float32([100.0, 250.0, 500.0][i])
+            active_sz[off:off + len0] = active_radius * np.float32([1.0, 1.6, 2.4][i])
     else:
         # 在 orientation="down" 时，创建空数组以避免后续代码出错
         active_x = np.empty(0, dtype=np.float32)
@@ -244,12 +407,6 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         active_sz = np.empty(0, dtype=np.float32)
 
     # ---------- 3. 去重 ----------
-    active_xy_raw = np.empty((len0, 2), dtype=np.int32)
-    if len0 > 0:
-        active_xy_raw[:, 0] = x0.astype(np.int32)
-        active_xy_raw[:, 1] = y0.astype(np.int32)
-    active_xy = _unique_2d(active_xy_raw, np.int32(w))
-
     # ---------- 4. all_positions的可视化 (Optimized) ----------
     if orientation_int == 0:
         n_all = len(all_positions_x)
@@ -257,11 +414,11 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         # 假设 all_positions_x/y 的最大值不超过 W, H
         lookup_table = np.full((H, W), -1, dtype=np.int32)
         for i in range(len(position_index_keys_x)):
-            lookup_table[position_index_keys_y[i], position_index_keys_x[i]] = position_index_values[i]
+            lookup_table[position_index_keys_x[i], position_index_keys_y[i]] = position_index_values[i]
         
         inactive_flags = np.ones(n_all, dtype=np.bool_)
         for i in prange(n_all):
-            if _is_active(all_positions_x[i], all_positions_y[i], active_xy):
+            if p0[all_positions_x[i], all_positions_y[i]] != 0:
                 inactive_flags[i] = False
 
         inactive_indices = np.nonzero(inactive_flags)[0]
@@ -276,7 +433,7 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
             py = all_positions_y[original_idx]
             inactive_x[i] = np.float32(px)
             inactive_y[i] = np.float32(py)
-            lookup_idx = lookup_table[int(py), int(px)]
+            lookup_idx = lookup_table[int(px), int(py)]
             if lookup_idx != -1:
                 inactive_op[i] = opacity_values[lookup_idx]
             else:
@@ -291,7 +448,11 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
     step1_y = np.concatenate((active_y, inactive_y)) - offset[1]
     step1_z = np.zeros(len(step1_x), dtype=np.float32)
     step1_op = np.concatenate((active_op, inactive_op))
-    step1_sz = np.concatenate((active_sz, np.full(len(inactive_x), 20.0, dtype=np.float32)))
+    step1_sz = np.concatenate((active_sz, np.full(len(inactive_x), inactive_screen_radius, dtype=np.float32)))
+    step1_types = np.concatenate((
+        np.zeros(len(active_x), dtype=np.int32),
+        np.full(len(inactive_x), 3, dtype=np.int32),
+    ))
 
     # ---------- 6. 滚动层 ----------
     if orientation_int == 1:
@@ -302,17 +463,23 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         step2_z = (nz[0] + 1).astype(np.float32)
 
     step2_len = len(nz[0])
-    step2_x = nz[2].astype(np.float32)
-    step2_y = nz[1].astype(np.float32)
+    step2_x = nz[1].astype(np.float32)
+    step2_y = nz[2].astype(np.float32)
 
     step2_sz = np.empty(step2_len, dtype=np.float32)
     for i in prange(step2_len):
         ix = int(step2_x[i])
         iy = int(step2_y[i])
         iz = int(step2_z[i])
-        val = pattern_data_thickness[iz, iy, ix] * 5.0
-        max_val = 500 if orientation_int == 0 else 200
-        step2_sz[i] = min(max(val, 0.0), max_val)
+        area_units = pattern_data_thickness[iz, ix, iy]
+        step2_sz[i] = _bubble_screen_radius(
+            area_units,
+            bubble_area_unit_m2,
+            min_bubble_radius_m,
+            max_bubble_radius_m,
+            bubble_screen_radius_per_meter,
+            min_bubble_screen_radius,
+        )
 
     step2_x -= offset[0]
     step2_y -= offset[1]
@@ -320,62 +487,63 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
     # ---------- 7. 积雪效果 (Optimized) ----------
     if orientation_int == 1 and max_snow_ttl > 0:
         stack_depth, H, W = snow_ttl.shape
-        new_snow_sizes = np.full((stack_depth, H, W), -1.0, dtype=np.float32)
         # 1. 更新TTL (消融 & 堆叠) - Parallelized
-        for y in prange(H):
-            for x in range(W):
+        for x in prange(H):
+            for y in range(W):
                 top_snow_z = -1
                 for z in range(stack_depth):
-                    if snow_ttl[z, y, x] > 0:
+                    if snow_ttl[z, x, y] > 0:
                         top_snow_z = z
                         break
                 if top_snow_z != -1:
-                    snow_ttl[top_snow_z, y, x] -= 1
+                    snow_ttl[top_snow_z, x, y] -= 1
+                    if snow_ttl[top_snow_z, x, y] <= 0:
+                        snow_sizes[top_snow_z, x, y] = 0.0
 
-                if pattern_data[-1, y, x] > 0:
-                    # 获取当前雪花的实际厚度
-                    actual_thickness = pattern_data_thickness[-1, y, x] * 5.0  # 与step2_sz的缩放一致
-                    actual_size = min(max(actual_thickness, 10.0), 200.0)  # 限制范围，避免过大
+                if pattern_data[0, x, y] > 0:
+                    actual_size = _bubble_screen_radius(
+                        pattern_data_thickness[0, x, y],
+                        bubble_area_unit_m2,
+                        min_bubble_radius_m,
+                        max_bubble_radius_m,
+                        bubble_screen_radius_per_meter,
+                        min_bubble_screen_radius,
+                    )
 
                     highest_pos = stack_depth - 1
                     for z in range(stack_depth):
-                        if snow_ttl[z, y, x] > 0:
+                        if snow_ttl[z, x, y] > 0:
                             highest_pos = z
                             break
                     new_pos = highest_pos - 1
                     if new_pos >= 0:
-                        snow_ttl[new_pos, y, x] = max_snow_ttl
-                        new_snow_sizes[new_pos, y, x] = actual_size  # 记录实际大小
+                        snow_ttl[new_pos, x, y] = max_snow_ttl
+                        snow_sizes[new_pos, x, y] = actual_size
 
         # 2. 准备渲染数据 (Optimized)
         snow_indices = np.nonzero(snow_ttl)
         snow_count = len(snow_indices[0])
-        snow_x = snow_indices[2].astype(np.float32)
-        snow_y = snow_indices[1].astype(np.float32)
+        snow_x = snow_indices[1].astype(np.float32)
+        snow_y = snow_indices[2].astype(np.float32)
         snow_z = (-snow_indices[0] * 5).astype(np.float32)
         
         # --- Numba-compatible way to get ttl_values ---
         ttl_values = np.empty(snow_count, dtype=np.float32)
         for i in prange(snow_count):
             z_idx = snow_indices[0][i]
-            y_idx = snow_indices[1][i]
-            x_idx = snow_indices[2][i]
-            ttl_values[i] = snow_ttl[z_idx, y_idx, x_idx]
+            x_idx = snow_indices[1][i]
+            y_idx = snow_indices[2][i]
+            ttl_values[i] = snow_ttl[z_idx, x_idx, y_idx]
 
         snow_sz = np.empty(snow_count, dtype=np.float32)
         snow_op = np.empty(snow_count, dtype=np.float32)
         for i in prange(snow_count):
             z_idx = snow_indices[0][i]
-            y_idx = snow_indices[1][i]
-            x_idx = snow_indices[2][i]
-            ttl_val = ttl_values[i] = snow_ttl[z_idx, y_idx, x_idx]
+            x_idx = snow_indices[1][i]
+            y_idx = snow_indices[2][i]
+            ttl_val = ttl_values[i] = snow_ttl[z_idx, x_idx, y_idx]
 
-            actual_size = new_snow_sizes[z_idx, y_idx, x_idx]
-            if actual_size >= 0.0:  # 注意这里是 >= 0，因为初始化为 -1
-                snow_sz[i] = actual_size
-            else:
-                r = ttl_val / np.float32(max_snow_ttl)
-                snow_sz[i] = np.float32(10.0) + r * np.float32(40.0)
+            snow_sz[i] = snow_sizes[z_idx, x_idx, y_idx]
 
             snow_op[i] = np.float32(0.2) + (ttl_val / np.float32(max_snow_ttl)) * np.float32(0.8)
 
@@ -404,13 +572,13 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         light_sz = np.empty(num_light_particles, dtype=np.float32)
         light_op = np.empty(num_light_particles, dtype=np.float32)
 
-        light_source_pos = (W / 2, H / 2, data_height + 50)
+        light_source_pos = (H / 2, W / 2, data_height + 50)
         cone_length = (data_height + 50) * 0.4
+        max_radius = max(H, W) / 1.2
 
         for i in prange(num_light_particles):
             z = light_source_pos[2] - np.random.power(2) * cone_length
             cone_ratio = (light_source_pos[2] - z) / cone_length
-            max_radius = W / 1.2
             radius = np.random.uniform(0, max_radius) * cone_ratio
             angle = np.random.uniform(0, 2 * np.pi)
             x = light_source_pos[0] + radius * np.cos(angle)
@@ -420,10 +588,10 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
             dist_to_source = np.sqrt(dist_to_axis**2 + (z - light_source_pos[2])**2)
 
             falloff_factor = (1 - dist_to_source / (data_height + 60))**3
-            radial_factor = (1 - dist_to_axis / (W / 1.2))
+            radial_factor = (1 - dist_to_axis / max_radius)
 
             opacity = radial_factor * falloff_factor * 0.8
-            size = radial_factor * falloff_factor * 120
+            size = radial_factor * falloff_factor * light_particle_screen_radius
 
             light_x[i] = x - offset[0]
             light_y[i] = y - offset[1]
@@ -434,7 +602,7 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         lampshade_x = np.array([light_source_pos[0] - offset[0]], dtype=np.float32)
         lampshade_y = np.array([light_source_pos[1] - offset[1]], dtype=np.float32)
         lampshade_z = np.array([light_source_pos[2]], dtype=np.float32)
-        lampshade_sz = np.array([600], dtype=np.float32)
+        lampshade_sz = np.array([lampshade_screen_radius], dtype=np.float32)
         lampshade_op = np.array([1.0], dtype=np.float32)
     else:
         light_x = np.empty(0, dtype=np.float32)
@@ -455,7 +623,11 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
     all_sz = np.concatenate((all_sz_no_light, light_sz, lampshade_sz))
     all_op = np.concatenate((all_op_no_light, light_op, lampshade_op))
 
-    type_others = np.zeros(len(all_x_no_light), dtype=np.int32)
+    type_others = np.concatenate((
+        step1_types,
+        np.zeros(len(step2_x), dtype=np.int32),
+        np.zeros(len(snow_x), dtype=np.int32),
+    ))
     type_light = np.ones(len(light_x), dtype=np.int32)
     type_lampshade = np.full(len(lampshade_x), 2, dtype=np.int32)
     all_types = np.concatenate((type_others, type_light, type_lampshade))
@@ -466,11 +638,11 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
     blend_factors_step2 = np.zeros(len(step2_x), dtype=np.float32)   # 滚动雪花
 
     if orientation_int == 1:
-        light_center_x = W / 2 - offset[0]
-        light_center_y = H / 2 - offset[1]
+        light_center_x = H / 2 - offset[0]
+        light_center_y = W / 2 - offset[1]
 
         # 1. 积雪（snow）——保持原状
-        max_light_radius_snow = W / 1.2
+        max_light_radius_snow = max(H, W) / 1.2
         for i in prange(len(snow_x)):
             dist_to_center = np.sqrt((snow_x[i] - light_center_x)**2 +
                                      (snow_y[i] - light_center_y)**2)
@@ -484,7 +656,7 @@ def calculate_pattern_data_3d(#down 模式下才有积雪
         # 3. 滚动雪花（step2）——增强灯光混合
         light_source_z = light_source_pos[2]
         cone_length = (data_height + 50) * 1
-        max_light_radius_base = W / 1.2
+        max_light_radius_base = max(H, W) / 1.2
         min_blend = 0.2                   # 远处也保留基础橙色
 
         for i in prange(len(step2_x)):
@@ -545,6 +717,8 @@ def calculate_particle_colors_njit(all_types, all_color_blend_factors, all_opaci
     for i in prange(n_particles):
         particle_type = all_types[i]
         opacity = all_opacity[i]
+        if particle_type == 3 and opacity < 0.34:
+            opacity = 0.34
         
         if particle_type == 2:  # 灯罩
             final_r = black_r

@@ -32,7 +32,7 @@
 需要 Python 3.7+ 和以下包：（测试3.11）
 
 ```bash
-pip install matplotlib mido pygame numpy PyQt5 numba
+pip install mido pygame numpy PyQt5 numba websockets
 ```
 
 在 Linux 系统下，你需要安装 fluidsynth:

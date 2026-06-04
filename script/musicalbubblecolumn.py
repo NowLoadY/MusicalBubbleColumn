@@ -1,8 +1,6 @@
 """
 Musical Bubble Column!
 """
-import matplotlib
-matplotlib.use('Qt5Agg')
 import pygame
 import os.path as os_path
 import pygame.midi
@@ -78,6 +76,7 @@ if __name__ == "__main__":
             dialog_manager.show_dialog()
         
         if not visualizer.working and dialog_manager.user_cancelled:
+            visualizer.stop()
             break
         
         QApplication.processEvents()

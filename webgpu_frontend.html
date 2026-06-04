@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Musical Bubble Column - WebGPU</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --piano-height: 2.439vh;
+      --slider-track: rgba(255, 255, 255, 0.1);
+      --slider-thumb: rgb(153, 153, 153);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: rgb(0, 0, 60);
+      font-family: Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    body.no-piano {
+      --piano-height: 0px;
+    }
+
+    canvas {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 100vw;
+      height: calc(100vh - var(--piano-height));
+      display: block;
+    }
+
+    .slider {
+      position: fixed;
+      z-index: 5;
+      margin: 0;
+      padding: 0;
+      appearance: none;
+      background: transparent;
+      accent-color: transparent;
+    }
+
+    .slider:focus {
+      outline: none;
+    }
+
+    .slider::-webkit-slider-runnable-track {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--slider-track);
+    }
+
+    .slider::-webkit-slider-thumb {
+      appearance: none;
+      width: 10px;
+      height: 10px;
+      border: 1px solid var(--slider-thumb);
+      border-radius: 50%;
+      background: transparent;
+      margin-top: calc((3vh - 10px) / 2);
+    }
+
+    .slider::-moz-range-track {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--slider-track);
+    }
+
+    .slider::-moz-range-thumb {
+      width: 10px;
+      height: 10px;
+      border: 1px solid var(--slider-thumb);
+      border-radius: 50%;
+      background: transparent;
+    }
+
+    #elev-slider {
+      left: 90vw;
+      top: 10vh;
+      width: 3vw;
+      height: 80vh;
+      writing-mode: vertical-lr;
+      direction: rtl;
+    }
+
+    #elev-slider::-webkit-slider-runnable-track {
+      width: 100%;
+    }
+
+    #elev-slider::-webkit-slider-thumb {
+      margin-left: calc((3vw - 10px) / 2);
+      margin-top: 0;
+    }
+
+    #azim-slider {
+      left: 20vw;
+      bottom: 2vh;
+      width: 60vw;
+      height: 3vh;
+    }
+
+    body.no-piano #azim-slider {
+      bottom: 0;
+    }
+
+    #piano {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 100vw;
+      height: var(--piano-height);
+      z-index: 4;
+      background: white;
+      overflow: hidden;
+    }
+
+    body.no-piano #piano {
+      display: none;
+    }
+
+    .white-key,
+    .black-key {
+      position: absolute;
+      border: 1px solid black;
+      transform: translateZ(0);
+    }
+
+    .white-key {
+      top: 0;
+      bottom: 0;
+      background: white;
+    }
+
+    .black-key {
+      top: 0;
+      height: 60%;
+      background: rgb(26, 26, 26);
+      z-index: 2;
+    }
+
+    #error {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: min(420px, calc(100vw - 32px));
+      padding: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(0, 0, 0, 0.72);
+      color: white;
+      text-align: center;
+      z-index: 20;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <input id="elev-slider" class="slider" type="range" min="0" max="90" step="0.1" value="37" aria-label="Elevation">
+  <input id="azim-slider" class="slider" type="range" min="-5" max="5" step="0.1" value="1" aria-label="Azimuth speed">
+  <div id="piano" aria-hidden="true"></div>
+  <div id="error" class="hidden"></div>
+
+  <script type="module">
+    const FRAME_MAGIC = 0x3143424d;
+    const HEADER_BYTES = 48;
+    const PARTICLE_FLOATS = 10;
+    const PARTICLE_STRIDE = PARTICLE_FLOATS * 4;
+    const MIDI_MIN = 21;
+    const MIDI_MAX = 108;
+    const BLACK_MODS = new Set([1, 3, 6, 8, 10]);
+
+    const canvas = document.getElementById("stage");
+    const errorBox = document.getElementById("error");
+    const elevSlider = document.getElementById("elev-slider");
+    const azimSlider = document.getElementById("azim-slider");
+    const piano = document.getElementById("piano");
+
+    let adapter;
+    let device;
+    let context;
+    let pipeline;
+    let uniformBuffer;
+    let bindGroup;
+    let particleBuffer;
+    let particleCapacity = 1;
+    let particleCount = 0;
+    let frameId = 0;
+    let cameraPacket = new Float32Array([37, 30, -33, 33, -33, 33, 0, 402]);
+    let presentationFormat;
+    let ws;
+    let clearColor = { r: 0, g: 0, b: 60 / 255, a: 1 };
+
+    const state = {
+      width: 1,
+      height: 1,
+      startTime: performance.now(),
+      visualizePiano: true,
+    };
+
+    const shader = `
+struct Uniforms {
+  options: vec4<f32>,
+  ranges0: vec4<f32>,
+  ranges1: vec4<f32>,
+};
+
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+  @location(1) color: vec4<f32>,
+  @location(2) kind: f32,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+fn sceneToBox(source: vec3<f32>) -> vec3<f32> {
+  let xMin = uniforms.ranges0.x;
+  let xMax = uniforms.ranges0.y;
+  let yMin = uniforms.ranges0.z;
+  let yMax = uniforms.ranges0.w;
+  let zMin = uniforms.ranges1.x;
+  let zMax = uniforms.ranges1.y;
+  let verticalScale = uniforms.ranges1.z;
+  let horizontalRadius = max(
+    max(max(abs(xMin), abs(xMax)), max(abs(yMin), abs(yMax))),
+    0.001
+  );
+  let zCenter = (zMin + zMax) * 0.5;
+  let zRadius = max((zMax - zMin) * 0.5, 0.001);
+  return vec3<f32>(
+    source.x / horizontalRadius,
+    source.y / horizontalRadius,
+    ((source.z - zCenter) / zRadius) * verticalScale
+  );
+}
+
+@vertex
+fn vertexMain(
+  @builtin(vertex_index) vertexIndex: u32,
+  @location(0) posSize: vec4<f32>,
+  @location(1) color: vec4<f32>,
+  @location(2) particleMeta: vec2<f32>
+) -> VertexOut {
+  var corners = array<vec2<f32>, 6>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>( 1.0, -1.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>( 1.0, -1.0),
+    vec2<f32>( 1.0,  1.0)
+  );
+
+  let corner = corners[vertexIndex];
+  let kind = particleMeta.x;
+  let center = sceneToBox(posSize.xyz);
+
+  let radius = max(posSize.w * uniforms.options.x, 0.001);
+
+  let elev = uniforms.options.z;
+  let azim = uniforms.options.w;
+  let sinAzim = sin(azim);
+  let cosAzim = cos(azim);
+  let sinElev = sin(elev);
+  var cosElev = cos(elev);
+  if (abs(cosElev) < 0.0005) {
+    cosElev = 0.0;
+  }
+  let aspect = max(uniforms.ranges1.w, 0.001);
+  let verticalScale = uniforms.ranges1.z;
+  let xyProjectionRadius = 1.41421356237;
+  let sceneProjectionRadius = sqrt(xyProjectionRadius * xyProjectionRadius + verticalScale * verticalScale);
+  let rawScreen = vec2<f32>(
+    (-sinAzim * center.x + cosAzim * center.y) / aspect,
+    -sinElev * cosAzim * center.x - sinElev * sinAzim * center.y + cosElev * center.z
+  );
+  let projectedHalfWidth = max(xyProjectionRadius / aspect, 0.001);
+  let projectedHalfHeight = max(sceneProjectionRadius, 0.001);
+  let fitScale = min(0.84 / projectedHalfWidth, 0.84 / projectedHalfHeight);
+  let screen = rawScreen * fitScale;
+  let pixelCorrectedCorner = vec2<f32>(corner.x / aspect, corner.y);
+  var out: VertexOut;
+  out.position = vec4<f32>(screen + pixelCorrectedCorner * radius, 0.5, 1.0);
+  out.uv = corner;
+  out.color = color;
+  out.kind = kind;
+  return out;
+}
+
+@fragment
+fn fragmentMain(in: VertexOut) -> @location(0) vec4<f32> {
+  let r2 = dot(in.uv, in.uv);
+  if (r2 > 1.0) {
+    discard;
+  }
+  let edgeWidth = max(fwidth(r2) * 1.35, 0.0015);
+  let disk = 1.0 - smoothstep(1.0 - edgeWidth, 1.0 + edgeWidth, r2);
+  let z = sqrt(max(1.0 - r2, 0.0));
+  let normal = normalize(vec3<f32>(in.uv.x * 0.28, in.uv.y * 0.28, z));
+  let light = normalize(vec3<f32>(-0.36, 0.42, 0.83));
+  let diffuse = max(dot(normal, light), 0.0);
+  let rim = smoothstep(0.78, 0.99, sqrt(r2)) * 0.10;
+  let alpha = in.color.a * disk;
+  var rgb = in.color.rgb * (0.78 + diffuse * 0.18) + vec3<f32>(0.08, 0.14, 0.18) * rim;
+  if (in.kind > 0.5 && in.kind < 1.5) {
+    rgb = rgb + in.color.rgb * 0.28;
+  }
+  if (in.kind > 1.5) {
+    rgb = mix(vec3<f32>(0.02, 0.02, 0.028), rgb, 0.24);
+  }
+  if (in.kind > 2.5 && in.kind < 3.5) {
+    rgb = in.color.rgb * 0.94;
+  }
+  return vec4<f32>(rgb, alpha);
+}`;
+
+    start().catch(showError);
+
+    async function start() {
+      buildPiano();
+      if (!navigator.gpu) {
+        throw new Error("WebGPU is required.");
+      }
+      adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+      if (!adapter) {
+        throw new Error("No WebGPU adapter is available.");
+      }
+      device = await adapter.requestDevice();
+      context = canvas.getContext("webgpu");
+      presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+      context.configure({ device, format: presentationFormat, alphaMode: "opaque" });
+      createPipeline();
+      setupInteraction();
+      resize();
+      window.addEventListener("resize", resize);
+      connect();
+      requestAnimationFrame(render);
+    }
+
+    function createPipeline() {
+      uniformBuffer = device.createBuffer({
+        size: 48,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      particleBuffer = createParticleBuffer(particleCapacity);
+      pipeline = device.createRenderPipeline({
+        layout: "auto",
+        vertex: {
+          module: device.createShaderModule({ code: shader }),
+          entryPoint: "vertexMain",
+          buffers: [{
+            arrayStride: PARTICLE_STRIDE,
+            stepMode: "instance",
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x4" },
+              { shaderLocation: 1, offset: 16, format: "float32x4" },
+              { shaderLocation: 2, offset: 32, format: "float32x2" },
+            ],
+          }],
+        },
+        fragment: {
+          module: device.createShaderModule({ code: shader }),
+          entryPoint: "fragmentMain",
+          targets: [{
+            format: presentationFormat,
+            blend: {
+              color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+              alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" },
+            },
+          }],
+        },
+        primitive: { topology: "triangle-list" },
+      });
+      bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+      });
+    }
+
+    function createParticleBuffer(capacity) {
+      return device.createBuffer({
+        size: Math.max(1, capacity) * PARTICLE_STRIDE,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+    }
+
+    function connect() {
+      const params = new URLSearchParams(location.search);
+      const port = params.get("ws");
+      if (!port) {
+        throw new Error("Missing WebSocket port.");
+      }
+      const host = location.hostname || "127.0.0.1";
+      ws = new WebSocket(`ws://${host}:${port}`);
+      ws.binaryType = "arraybuffer";
+      ws.addEventListener("open", () => {
+        ws.send(JSON.stringify({ type: "ready" }));
+        sendControls();
+      });
+      ws.addEventListener("message", handleSocketMessage);
+      ws.addEventListener("close", () => setTimeout(connect, 1000));
+    }
+
+    async function handleSocketMessage(event) {
+      if (typeof event.data === "string") {
+        handleTextMessage(JSON.parse(event.data));
+        return;
+      }
+      const buffer = event.data instanceof ArrayBuffer ? event.data : await event.data.arrayBuffer();
+      handleBinaryFrame(buffer);
+    }
+
+    function handleTextMessage(message) {
+      if (message.type === "settings") {
+        const bg = message.background_color || [0, 0, 60 / 255, 1];
+        clearColor = { r: bg[0], g: bg[1], b: bg[2], a: bg[3] ?? 1 };
+        document.body.style.backgroundColor = `rgb(${Math.round(bg[0] * 255)}, ${Math.round(bg[1] * 255)}, ${Math.round(bg[2] * 255)})`;
+        state.visualizePiano = message.visualize_piano !== false;
+        document.body.classList.toggle("no-piano", !state.visualizePiano);
+        resize();
+      } else if (message.type === "piano") {
+        updatePiano(message.active || [], message.volumes || []);
+      } else if (message.type === "clear") {
+        particleCount = 0;
+      }
+    }
+
+    function handleBinaryFrame(buffer) {
+      const view = new DataView(buffer);
+      if (view.getUint32(0, true) !== FRAME_MAGIC || view.getUint32(4, true) !== 1) {
+        throw new Error("Invalid WebGPU frame packet.");
+      }
+      frameId = view.getUint32(8, true);
+      particleCount = view.getUint32(12, true);
+      for (let i = 0; i < 8; i += 1) {
+        cameraPacket[i] = view.getFloat32(16 + i * 4, true);
+      }
+      const neededBytes = particleCount * PARTICLE_STRIDE;
+      if (particleCount > particleCapacity) {
+        particleCapacity = nextPowerOfTwo(particleCount);
+        particleBuffer.destroy();
+        particleBuffer = createParticleBuffer(particleCapacity);
+      }
+      if (neededBytes > 0) {
+        device.queue.writeBuffer(particleBuffer, 0, buffer, HEADER_BYTES, neededBytes);
+      }
+      document.body.dataset.frame = String(frameId);
+      document.body.dataset.particles = String(particleCount);
+    }
+
+    function setupInteraction() {
+      const sliderEvents = [elevSlider, azimSlider];
+      for (const slider of sliderEvents) {
+        slider.addEventListener("input", sendControls);
+        slider.addEventListener("pointerenter", sendControls);
+        slider.addEventListener("pointerdown", sendControls);
+      }
+      window.addEventListener("pointerup", sendControls);
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "r" || event.key === "R") {
+          sendCommand("toggle_orientation");
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          sendCommand("request_file_selection");
+        }
+      });
+      window.addEventListener("dblclick", () => sendCommand("next_theme"));
+    }
+
+    function sendControls() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      ws.send(JSON.stringify({
+        type: "controls",
+        target_elev: Number(elevSlider.value),
+        target_azim_speed: Number(azimSlider.value),
+      }));
+    }
+
+    function sendCommand(command) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "command", command }));
+      }
+    }
+
+    function buildPiano() {
+      piano.innerHTML = "";
+      const whiteKeyMap = new Map();
+      let whiteIndex = 0;
+      for (let note = MIDI_MIN; note <= MIDI_MAX; note += 1) {
+        if (!isBlackKey(note)) {
+          const key = document.createElement("div");
+          key.className = "white-key";
+          key.dataset.note = String(note - MIDI_MIN);
+          key.style.left = `${whiteIndex / 52 * 100}%`;
+          key.style.width = `${1 / 52 * 100}%`;
+          piano.appendChild(key);
+          whiteKeyMap.set(note, whiteIndex);
+          whiteIndex += 1;
+        }
+      }
+
+      for (let note = MIDI_MIN; note <= MIDI_MAX; note += 1) {
+        if (!isBlackKey(note)) {
+          continue;
+        }
+        let leftWhite = note - 1;
+        while (isBlackKey(leftWhite)) {
+          leftWhite -= 1;
+        }
+        if (!whiteKeyMap.has(leftWhite)) {
+          continue;
+        }
+        const x = whiteKeyMap.get(leftWhite) + 1 - 0.275;
+        const key = document.createElement("div");
+        key.className = "black-key";
+        key.dataset.note = String(note - MIDI_MIN);
+        key.style.left = `${x / 52 * 100}%`;
+        key.style.width = `${0.55 / 52 * 100}%`;
+        piano.appendChild(key);
+      }
+    }
+
+    function updatePiano(active, volumes) {
+      for (const key of piano.children) {
+        const index = Number(key.dataset.note);
+        const vol = (volumes[index] || 0) / 127;
+        if (key.classList.contains("white-key")) {
+          if (active[index]) {
+            const v = Math.round((0.9 - vol * 0.5) * 255);
+            key.style.backgroundColor = `rgba(${v}, ${v}, ${v}, ${Math.min(0.3 + vol * 0.7, 1)})`;
+          } else {
+            key.style.backgroundColor = "white";
+          }
+        } else if (active[index]) {
+          const v = Math.round((0.7 + vol * 0.3) * 255);
+          key.style.backgroundColor = `rgba(${v}, ${v}, ${v}, ${Math.min(0.7 + vol * 0.3, 1)})`;
+        } else {
+          key.style.backgroundColor = "rgb(26, 26, 26)";
+        }
+      }
+    }
+
+    function isBlackKey(note) {
+      return BLACK_MODS.has(note % 12);
+    }
+
+    function resize() {
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      state.width = Math.max(1, Math.floor(canvas.clientWidth * ratio));
+      state.height = Math.max(1, Math.floor(canvas.clientHeight * ratio));
+      canvas.width = state.width;
+      canvas.height = state.height;
+    }
+
+    function render(now) {
+      updateUniforms(now);
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: context.getCurrentTexture().createView(),
+          clearValue: clearColor,
+          loadOp: "clear",
+          storeOp: "store",
+        }],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.setVertexBuffer(0, particleBuffer);
+      if (particleCount > 0) {
+        pass.draw(6, particleCount);
+      }
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+      requestAnimationFrame(render);
+    }
+
+    function updateUniforms(now) {
+      const seconds = (now - state.startTime) * 0.001;
+      const elev = cameraPacket[0] * Math.PI / 180;
+      const azim = cameraPacket[1] * Math.PI / 180;
+      const aspect = state.width / Math.max(state.height, 1);
+      const zAspect = 3;
+
+      const data = new Float32Array(12);
+      data.set([1, seconds, elev, azim], 0);
+      data.set([cameraPacket[2], cameraPacket[3], cameraPacket[4], cameraPacket[5]], 4);
+      data.set([cameraPacket[6], cameraPacket[7], zAspect, aspect], 8);
+      device.queue.writeBuffer(uniformBuffer, 0, data);
+    }
+
+    function nextPowerOfTwo(value) {
+      let result = 1;
+      while (result < value) {
+        result *= 2;
+      }
+      return result;
+    }
+
+
+    function showError(error) {
+      errorBox.textContent = error.message || String(error);
+      errorBox.classList.remove("hidden");
+      console.error(error);
+    }
+  </script>
+</body>
+</html>

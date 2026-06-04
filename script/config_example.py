@@ -19,16 +19,19 @@ def main():
     print(f"   - Audio frequency: {config.audio.frequency}")
     print(f"   - Window title: {config.ui.window_title}")
     print(f"   - Max bubble volume (up): {config.physics.max_volume_up}")
+    print(f"   - Column height: {config.scale.column_height_m} m")
     print(f"   - GPU auto-selection: {config.performance.auto_gpu_selection}")
     
     # Demonstrate configuration modification
     print("\n2. Modifying configuration...")
     config.visualization.default_orientation = "down"
     config.physics.max_volume_up = 750
+    config.scale.column_height_m = 1.4
     config.performance.auto_gpu_selection = False
     
     print(f"   - Changed orientation to: {config.visualization.default_orientation}")
     print(f"   - Changed max volume to: {config.physics.max_volume_up}")
+    print(f"   - Changed column height to: {config.scale.column_height_m} m")
     print(f"   - Disabled GPU auto-selection: {config.performance.auto_gpu_selection}")
     
     # Save configuration to file
@@ -41,6 +44,7 @@ def main():
     loaded_config = load_config("example_settings.json")
     print(f"   - Loaded orientation: {loaded_config.visualization.default_orientation}")
     print(f"   - Loaded max volume: {loaded_config.physics.max_volume_up}")
+    print(f"   - Loaded column height: {loaded_config.scale.column_height_m} m")
     print(f"   - Loaded GPU setting: {loaded_config.performance.auto_gpu_selection}")
     
     # Demonstrate structured access
@@ -50,6 +54,7 @@ def main():
     print(f"     - theme: {type(config.theme).__name__}")
     print(f"     - visualization: {type(config.visualization).__name__}")
     print(f"     - physics: {type(config.physics).__name__}")
+    print(f"     - scale: {type(config.scale).__name__}")
     print(f"     - audio: {type(config.audio).__name__}")
     print(f"     - ui: {type(config.ui).__name__}")
     print(f"     - performance: {type(config.performance).__name__}")
@@ -62,10 +67,11 @@ def main():
     
     # Physics settings example (referencing bubble physics memory)
     print("\n7. Physics simulation settings:")
-    print(f"   - Base rise speed (up): {config.physics.base_rise_speed_up}")
     print(f"   - Max rise speed: {config.physics.max_rise_speed}")
     print(f"   - Merge interval: {config.physics.merge_interval}")
-    print(f"   - Bubble size increase factor: {config.physics.size_increase_factor}")
+    print(f"   - Time step: {config.scale.simulation_step_s} s")
+    print(f"   - Bubble area unit: {config.scale.bubble_area_unit_m2} m^2")
+    print(f"   - Split Weber number: {config.scale.split_weber_number}")
     
     print("\n=== Configuration Demo Complete ===")
 

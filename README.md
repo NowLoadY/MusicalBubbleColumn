@@ -6,10 +6,7 @@
 # Overview
 [让我们说中文](README_ch.md)
 
-**Musical Bubble Column** is a 3D music visualization project built with Python that displays MIDI music in a visual format. Using **Matplotlib** and **Pygame**, it creates a visual representation of musical notes arranged in a Fibonacci spiral pattern.
-
-## ToDoList
-- [ ] Use better render engine
+**Musical Bubble Column** is a 3D music visualization project built with Python and a dedicated **WebGPU** renderer. Python handles MIDI playback and physics simulation, then streams compact binary particle frames to the browser, where WebGPU renders the bubble column with GPU instancing.
 
 ## Features
 <div align="center">
@@ -22,9 +19,9 @@
 - MIDI playback
 
 ### 3D Visualization
-- 3D bubble animations
+- WebGPU bubble rendering
+- GPU-instanced particle billboards
 - Fibonacci-sequence based layout
-- Adjustable viewing angles (Elevation & Azimuth)
 - Basic physics simulation
 
 ### MIDI Processing
@@ -37,8 +34,10 @@
 ## Prerequisites
 Python 3.7+ and the following packages are required:
 ```bash
-pip install matplotlib mido pygame numpy PyQt5 numba
+pip install mido pygame numpy PyQt5 numba websockets
 ```
+
+The renderer requires a browser with WebGPU support.
 
 For Linux, you need to install fluidsynth:
 ```bash
@@ -82,11 +81,15 @@ Alternatively, you can download the precompiled .exe file from the [releases](ht
 ## Technical Details
 
 ### Components
-- **PatternVisualizer3D**: Visualization engine
+- **PatternVisualizer3D**: MIDI-driven simulation coordinator
+- **WebGPURenderer**: local HTTP/WebSocket bridge
+- **WebGPU frontend**: GPU particle renderer
 - **MIDI Processor**: MIDI data handling
-- **Physics Sim**: Bubble movement
+- **Physics Sim**: bubble movement
 
 ### Optimizations
+- WebGPU instanced rendering
+- Binary WebSocket frame transport
 - Numba acceleration
 - Memory management
 

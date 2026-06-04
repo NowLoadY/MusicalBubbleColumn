@@ -1,0 +1,6 @@
+mido
+pygame
+numpy
+PyQt5
+numba
+websockets
