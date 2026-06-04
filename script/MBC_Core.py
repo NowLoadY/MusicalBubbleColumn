@@ -76,11 +76,13 @@ class PatternVisualizer3D:
         self.render_settings = RenderSettings(
             background_color=self.fig_themes_rgba[self.theme_index],
             window_opacity=self.window_opacity,
-            max_particles=self.config.performance.particle_count_light * self.data_height,
+            max_particles=self._estimate_max_render_particles(max_size),
             visualize_piano=self.visualize_piano,
         )
         self.render_engine.initialize(self.render_settings)
         self.physics_handler.set_raw_pattern_data(self.pattern_data, self.pattern_data_thickness)
+        self.bubble_particles = self.physics_handler.bubble_particles
+        self.particle_grid = self.physics_handler.particle_grid
 
         self.scaler = self.bubble_generator.scaler
         self.final_volume = self.bubble_generator.final_volume
@@ -92,6 +94,14 @@ class PatternVisualizer3D:
         self.snow_sizes = self.physics_handler.snow_sizes
         self.MAX_SNOW_TTL = self.config.physics.max_snow_ttl
         self._last_frame_time = time.perf_counter()
+
+    def _estimate_max_render_particles(self, max_size):
+        rows = max_size + 1
+        cols = max_size + 1
+        note_particles = self.config.visualization.num_positions * 4
+        snow_particles = self.config.physics.max_snow_stack_height * rows * cols
+        light_particles = self.config.performance.particle_count_light + 1
+        return self.config.physics.max_bubble_particles + note_particles + snow_particles + light_particles
 
     def _initialize_data(self):
         max_x = max(abs(pos[0]) for pos in self.position_list)
@@ -142,9 +152,8 @@ class PatternVisualizer3D:
 
     def update_pattern(self, new_pattern, volumes, average_volume, key_activation_bytes, volumes_real):
         self._sync_frontend_controls()
-        boundary_layer = -1 if self.orientation == "down" else 0
-        self.pattern_data[boundary_layer, :, :] = 0
-        self.pattern_data_thickness[boundary_layer, :, :] = 0
+        self.pattern_data.fill(0)
+        self.pattern_data_thickness.fill(0)
 
         self.azim_angle = (self.azim_angle - self.target_azim_speed) % 360
         transition_rate = self.config.visualization.view_transition_rate
@@ -158,7 +167,9 @@ class PatternVisualizer3D:
 
         if isinstance(new_pattern, bytes):
             bit_array = np.unpackbits(np.frombuffer(new_pattern, dtype=np.uint8))
-            self._update_data_layer(bit_array, volumes, average_volume)
+            self._write_birth_grid(bit_array, volumes, average_volume)
+
+        self._advance_particles()
 
         self._draw_pattern()
         if self.visualize_piano and key_activation_bytes is not None and volumes_real is not None:
@@ -187,11 +198,7 @@ class PatternVisualizer3D:
         self.app_commands.clear()
         return commands
 
-    def _update_data_layer(self, bit_array, volumes, average_volume):
-        boundary_layer = -1 if self.orientation == "down" else 0
-        self.pattern_data[boundary_layer, :, :] = 0
-        self.pattern_data_thickness[boundary_layer, :, :] = 0
-
+    def _write_birth_grid(self, bit_array, volumes, average_volume):
         variances = self.physics_engine.add_pattern(
             bit_array,
             volumes,
@@ -211,25 +218,25 @@ class PatternVisualizer3D:
             self.bubble_generator.final_volume_index = (
                 self.bubble_generator.final_volume_index + len(active_indices)
             ) % self.config.physics.final_volume_history_size
-
-        pattern_data_temp, pattern_data_thickness_temp = self.physics_engine.calculate_bubble(
-            self.pattern_data,
-            self.pattern_data_thickness,
-            self.data_height,
-            orientation=self.orientation,
-        )
-        if self.orientation == "down":
-            self.pattern_data[: self.data_height - 1] = pattern_data_temp[: self.data_height - 1]
-            self.pattern_data_thickness[: self.data_height - 1] = pattern_data_thickness_temp[: self.data_height - 1]
-        else:
-            self.pattern_data[1:self.data_height] = pattern_data_temp[1:self.data_height]
-            self.pattern_data_thickness[1:self.data_height] = pattern_data_thickness_temp[1:self.data_height]
         self.bubble_generator.update_scaler_from_variances(variances)
 
         self.scaler = self.bubble_generator.scaler
         self.final_volume = self.bubble_generator.final_volume
         self.final_volume_index = self.bubble_generator.final_volume_index
         self.thickness_list = self.bubble_generator.thickness_list
+
+    def _advance_particles(self):
+        orientation_int = 0 if self.orientation == "up" else 1
+        self.physics_engine.advance_bubble_particles(
+            self.pattern_data,
+            self.pattern_data_thickness,
+            self.bubble_particles,
+            self.particle_grid,
+            self.snow_ttl,
+            self.snow_sizes,
+            self.data_height,
+            orientation_int,
+        )
 
     def _draw_pattern(self):
         all_positions = self.all_positions_array
@@ -238,6 +245,7 @@ class PatternVisualizer3D:
             self.physics_engine.calculate_render_data(
                 self.pattern_data,
                 self.pattern_data_thickness,
+                self.bubble_particles,
                 self.offset,
                 all_positions[:, 0],
                 all_positions[:, 1],
@@ -274,6 +282,12 @@ class PatternVisualizer3D:
             z_range=self.zlim,
         )
         self.render_engine.render_frame(particles, camera)
+
+    def has_active_bubbles(self):
+        return bool(
+            np.any(self.bubble_particles[:, 6] > 0.0)
+            or np.any(self.pattern_data > 0.0)
+        )
 
     def _pace_frame(self):
         frame_rate = max(1, self.render_settings.frame_rate_limit)
@@ -323,11 +337,15 @@ def init_njit_func(visualizer):
         visualizer.pattern_data_thickness,
         visualizer.orientation,
     )
-    visualizer.physics_engine.calculate_bubble(
+    visualizer.physics_engine.advance_bubble_particles(
         visualizer.pattern_data,
         visualizer.pattern_data_thickness,
+        visualizer.bubble_particles,
+        visualizer.particle_grid,
+        visualizer.snow_ttl,
+        visualizer.snow_sizes,
         visualizer.data_height,
-        visualizer.orientation,
+        0 if visualizer.orientation == "up" else 1,
     )
 
     all_positions = visualizer.all_positions_array
@@ -335,6 +353,7 @@ def init_njit_func(visualizer):
     visualizer.physics_engine.calculate_render_data(
         visualizer.pattern_data,
         visualizer.pattern_data_thickness,
+        visualizer.bubble_particles,
         visualizer.offset,
         all_positions[:, 0],
         all_positions[:, 1],

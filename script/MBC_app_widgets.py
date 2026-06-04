@@ -204,7 +204,7 @@ class MidiVisualizer:
             self.consume_visualizer_app_commands()
             self.update_count += 1
 
-            if not pygame.mixer.music.get_busy() and np.sum(self.visualizer.pattern_data) == 0:
+            if not pygame.mixer.music.get_busy() and not self.visualizer.has_active_bubbles():
                 self.visualizer.working = False
                 break
 

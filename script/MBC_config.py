@@ -79,6 +79,7 @@ class PhysicsConfig:
     merge_interval: int = 5  # Check merging every N layers
     grid_cell_size: int = 3
     adjacent_grid_threshold: int = 1
+    max_bubble_particles: int = 32768
 
     # Snow effects (for down orientation)
     max_snow_stack_height: int = 5

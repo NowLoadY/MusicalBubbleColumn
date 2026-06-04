@@ -50,6 +50,11 @@ class PhysicsHandler:
         self.pattern_data_required_size = (data_height, max_x + 1, max_y + 1)
         self.pattern_data = np.zeros(self.pattern_data_required_size, dtype=np.float32)
         self.pattern_data_thickness = np.zeros(self.pattern_data_required_size, dtype=np.float32)
+        self.bubble_particles = np.zeros(
+            (self.config.physics.max_bubble_particles, 7),
+            dtype=np.float32,
+        )
+        self.particle_grid = np.full(self.pattern_data_required_size, -1, dtype=np.int32)
         
         # 渲染相关数据引用
         self.all_positions = all_positions
@@ -72,6 +77,8 @@ class PhysicsHandler:
         """重置物理状态"""
         self.pattern_data.fill(0)
         self.pattern_data_thickness.fill(0) 
+        self.bubble_particles.fill(0)
+        self.particle_grid.fill(-1)
         if hasattr(self, 'snow_ttl'):
             self.snow_ttl.fill(0)
         if hasattr(self, 'snow_sizes'):
@@ -79,8 +86,8 @@ class PhysicsHandler:
     
     def get_physics_statistics(self) -> Dict:
         """获取物理统计信息"""
-        active_bubbles = np.sum(self.pattern_data > 0)
-        total_energy = np.sum(self.pattern_data_thickness)
+        active_bubbles = np.sum(self.bubble_particles[:, 6] > 0)
+        total_energy = np.sum(self.bubble_particles[:, 3])
         
         return {
             "orientation": self.orientation,
@@ -108,6 +115,6 @@ class PhysicsHandler:
             pattern_data_thickness: 厚度数据数组
         """
         if pattern_data.shape == self.pattern_data.shape:
-            self.pattern_data = pattern_data.copy()
+            self.pattern_data = pattern_data
         if pattern_data_thickness.shape == self.pattern_data_thickness.shape:
-            self.pattern_data_thickness = pattern_data_thickness.copy()
+            self.pattern_data_thickness = pattern_data_thickness
